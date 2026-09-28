@@ -1,4 +1,10 @@
-# Writing a game adapter
+# Adapter hooks: inspector and write gate
+
+::: tip Looking for game adapters?
+This page covers the two hooks on `WgsStoreOptions`. A full **game adapter** bundles them with
+container naming, content description and a codec, and can be shipped or loaded as a plugin: see
+[Game adapters (plugins)](/guide/adapters).
+:::
 
 The library knows the container layer only. Everything game-specific plugs in through
 `WgsStoreOptions`, and every member has a real default:
@@ -176,7 +182,27 @@ if (commit.Status == WgsOperationStatus.Refused)
         Console.WriteLine($"{concern.Code}: {concern.Message}");
 ```
 
-::: info Coming soon
-Process-aware write gate and multi-blob container support are in development. This page will
-gain sections for them once the APIs land.
-:::
+## The built-in process gate
+
+The hand-written gate above checks one process. The library ships a reusable one that composes with
+the structural gate and can be tested with an injected process list:
+
+```csharp
+var options = new WgsStoreOptions
+{
+    WriteGate = WgsWriteGates.Combine(
+        WgsWriteGates.Structural,
+        WgsWriteGates.RefuseWhileRunning("MyGame*")),   // trailing * matches a name prefix
+};
+```
+
+If the process list cannot be read, the gate refuses (`process-check-failed`) rather than write
+blind. See [Write gates](/api/write-gates#process-aware-gate).
+
+## Multi-blob containers
+
+Some titles keep several named blobs per container. `TryReadBlobs` returns them by name and
+`WriteNamedBlob` replaces one while leaving the others byte-for-byte untouched. An inspector still
+sees the leading bytes of the container's first blob. See
+[WgsStore](/api/wgs-store#multi-blob-containers) and the
+[format reference](/wgs-format#multi-blob-containers).

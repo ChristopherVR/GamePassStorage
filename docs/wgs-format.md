@@ -98,7 +98,7 @@ on every save.
 
 ```
 u32 constant (4)
-u32 blob count (1)
+u32 blob count (1 for every store verified so far; see Multi-blob containers below)
 128-byte fixed UTF-16 name field ("Data", zero padded)
 16 bytes  blob id as the cloud last knew it
 16 bytes  blob id of the file on disk
@@ -120,6 +120,68 @@ folder-scan fallback ambiguous in the first place. Use `CopyStoreTo` to take a w
 
 `containers.index` and the manifests are written through a temp file plus an atomic replace: a
 truncated index loses every container in the store at once, which no per-save backup can undo.
+
+## Multi-blob containers
+
+The blob count in `container.N` is a real count. After the two leading `u32`s the manifest holds
+that many entries, each 160 bytes: the 128-byte UTF-16 name field, then the two 16-byte GUIDs
+(cloud id, then on-disk id). There is nothing after the last entry.
+
+```
+u32 constant (4)
+u32 blob count (N)
+N x { 128-byte UTF-16 name, 16-byte cloud id, 16-byte on-disk id }
+```
+
+Source: Z1ni/XGP-save-extractor's `main.py` reads exactly this (a `file_count`, then per file a
+128-byte UTF-16 name, a GUID and a copy of the GUID, "each entry occupies 160 bytes"), which is
+consistent with LukeFZ/XblContainerReader, Fr33dan/GPSaveConverter and libNOM.io. It was checked
+here against that source's code, not against a real multi-blob store: this repository has no
+multi-blob fixture. Treat the layout as documented but unverified on a real game.
+
+How the library handles it:
+
+- `TryReadBlobs` reads every blob by name. Each blob follows the single-blob read rules (in-flight
+  sync, previous-id fallback). The folder-scan last resort is used only for one-blob manifests,
+  because with several blobs a size match cannot say which file is which.
+- A write replaces only the blobs it names, with fresh GUIDs. Blobs it does not name keep their
+  files and both ids exactly, so their bytes are preserved. Bytes after the last entry (none in
+  known stores) and the leading constant are written back as read.
+- A manifest is **malformed** (reported by `Diagnose`, never guessed at) when it is shorter than its
+  count promises, declares zero or an absurd number (over 1024) of blobs, or repeats a blob name.
+- **Assumption:** for a multi-blob container the index entry's size is written as the total of all
+  blob sizes. The sources describe that field only for single-blob containers. Reading never
+  depends on it.
+- The write-side name limit is 63 characters (the 64-character field keeps a terminator); names
+  that differ only by case are refused.
+
+## Deleting a container
+
+`WgsStore.DeleteContainer` applies one rule, built from the state table above:
+
+- state 5 (`Created`) with an empty ETag means "made locally, never uploaded": the cloud has nothing
+  to delete, so the entry is removed from the index and its files are cleared (after the index
+  commits);
+- an entry with an ETag is known to the cloud: it becomes state 3 (`Deleted`), "a tombstone kept so
+  the deletion can reach the cloud", with the ETag and every other field untouched, and its files
+  are left in place. The index timestamp advances like any write.
+
+Sources: the state mapping in libNOM.io and the tombstone reading in the state table above. What
+Xbox does with a tombstone was **not** observed here (that needs a live sync); the rule only avoids
+inventing anything: no ETag is minted or dropped, and a never-uploaded entry leaves no tombstone
+because there is nothing to sync. A tombstone with an ETag is treated as healthy: it does not block
+writes to other containers, is not "repaired" back to life, and cannot be written to. A `Deleted`
+entry without an ETag is still damage.
+
+## Restoring a backup
+
+`WgsStore.TryRestore` copies files in blob, manifest, then index order, so an interruption before the
+final atomic index replace leaves the previous index and data described. The restored index is not
+the backup's bytes: its FILETIME is set strictly above both the backup's and the current store's,
+`FullyUploaded` is cleared, and containers the backup recorded as `Synced` are recorded as `Modified`
+(keeping their ETag), because restored content is a local change against whatever the cloud holds
+now. That last step is an assumption drawn from "state is set to what actually happened"; it has not
+been verified against a live sync.
 
 ## What a write does
 

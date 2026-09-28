@@ -2,8 +2,21 @@
 
 | Title | Read | Write | Evidence |
 | --- | --- | --- | --- |
-| Abiotic Factor | Yes | Yes | Real sanitized stores and in-game use through [Abiotic Editor](https://github.com/ChristopherVR/AbioticEditor) |
-| Any other title | Unverified | Unverified | Needs real sanitized fixtures before a support claim |
+| Abiotic Factor | Yes | Yes | Shipped adapter (`GamePassStorage.Adapters.AbioticFactor`, built into `wgs`). Real sanitized stores and in-game use through [Abiotic Editor](https://github.com/ChristopherVR/AbioticEditor) |
+| Any other title | Unverified | Unverified | Works through the generic model. Needs real sanitized fixtures before a support claim, and an adapter to add game knowledge |
+
+## Adapters
+
+A title with an adapter gets more than raw container access: the adapter recognises the package,
+names container kinds, describes what a blob holds, names orphaned data and adds its own write gate.
+
+| Adapter | Package | Serves | What it adds |
+| --- | --- | --- | --- |
+| Abiotic Factor | `GamePassStorage.Adapters.AbioticFactor` (built into `wgs`) | `PlayStack.AbioticFactor_3wcqaesafpzfy` | Container classification (`<World>-WC`, `<World>-WC-B`, `Profile*`, `Settings`), the `ABF_SAVE_VERSION` table of contents read without decompressing, settings ini decoding, orphaned world names, and a gate that refuses while `AbioticFactor*` runs. World bodies are Oodle-compressed and Oodle is not bundled, so the adapter reports that instead of decoding. |
+
+Every other title is served by the generic adapter: `list`, `diagnose`, `extract`, `put`, `delete`,
+`restore`, `export`, `import` and a generic `inspect` (size, SHA-256, content sniffing) all work. To add a
+title see [Game adapters (plugins)](/guide/adapters#adding-a-new-adapter).
 
 ## What "verified" means here
 
@@ -13,8 +26,8 @@ implementations (see the [format reference](/wgs-format#where-this-knowledge-cam
 
 Other Game Pass titles use the same container layer, so they may well work, but that is not
 evidence. The library's own in-memory tests exercise the API boundary with synthetic stores; they
-do not prove that a particular game's layout (multiple blobs per container, different manifest
-versions) is supported. `WgsStore` reports layouts it does not understand as `UnsupportedLayout`
+do not prove that a particular game's layout (multi-blob manifests are implemented from public
+sources but have no real multi-blob fixture here; different manifest versions are unseen) is supported. `WgsStore` reports layouts it does not understand as `UnsupportedLayout`
 rather than guessing.
 
 ## Trying it on another title

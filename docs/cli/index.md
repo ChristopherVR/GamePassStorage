@@ -1,8 +1,9 @@
 # CLI reference: wgs
 
 `wgs` is a thin command-line front end over the library. Every command reads unless it says
-otherwise. The only command that writes is [`put`](#wgs-put), and it goes through the same write
-gate and concurrent-change check as the library.
+otherwise. The commands that write are [`put`](#wgs-put), [`delete`](#wgs-delete),
+[`restore`](#wgs-restore) and [`import`](#wgs-import). Each one needs `--backup <dir>` (or
+`--dry-run`) and goes through the same write gate and concurrent-change check as the library.
 
 ## Install
 
@@ -22,6 +23,21 @@ wgs snapshot  <store> [-o <file.json>]             Fingerprint every container (
 wgs compare   <before.json> <after.json>           Describe what changed between snapshots.
 wgs put       <store> <container> <blob-file> --backup <dir> [--dry-run]
                                                    Add or replace a container's blob.
+wgs find      [--package <text>] [--exact] [--json]
+                                                   Find wgs stores on this machine.
+wgs blobs     <store> <container> [--json]         List the blobs inside a container.
+wgs delete    <store> <container> --backup <dir> [--dry-run]
+                                                   Delete a container (never-uploaded: removed;
+                                                   known to the cloud: kept as a Deleted tombstone).
+wgs restore   <store> <backup-folder> --backup <dir> [--dry-run]
+                                                   Restore a `wgs backup` over the store; the
+                                                   current store is copied to <dir> first.
+wgs adapters  [--json]                             List the game adapters in use.
+wgs inspect   <store> [<container>] [--json]       Describe what containers hold, using the
+                                                   matching game adapter (generic if none).
+wgs export    <store> <out-folder>                 Write every container's blobs and a manifest.
+wgs import    <store> <folder> --backup <dir> [--dry-run]
+                                                   Add or replace containers from an export folder.
 wgs help | --help | -h                             Show usage.
 wgs version | --version                            Print the tool version.
 ```
@@ -30,16 +46,26 @@ wgs version | --version                            Print the tool version.
 sub-folder of one. It is resolved with `WgsStore.ResolveContainerFolder`. Options can appear
 anywhere after the command name. An unknown option is a usage error.
 
-Close the game and the Xbox app before `put`; local writes cannot control cloud sync. See the
+Close the game and the Xbox app before any write; local writes cannot control cloud sync. See the
 [safety model](/guide/safety).
+
+### Global options
+
+| Option | Meaning |
+| --- | --- |
+| `--adapters <dir>` | Load extra [game adapters](/guide/adapters) from this folder. Repeatable. The `WGS_ADAPTERS_DIR` environment variable names more folders (separated by `;` on Windows, `:` elsewhere). Adapters run with full trust. |
+| `--no-builtin-adapters` | Do not register the adapters that ship with the tool, so every store is handled by the generic model. Plugin folders still load. |
+| `--refuse-if-running <name[,name]>` | On `put`, `delete`, `restore` and `import`: refuse while a process with one of these names runs (case-insensitive, `.exe` optional, a trailing `*` matches a prefix). Added to the structural gate and to any adapter gate. |
+
+A problem loading an adapter is printed as `warning: adapter: ...` and never stops the command.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Failure: the store could not be opened, a container was not found, a read or write failed or was refused, an IO error occurred, or (for `diagnose` and `put --dry-run`) writes are blocked. |
-| `2` | Usage error: unknown command or option, a missing argument, or `put` without `--backup` or `--dry-run`. Also returned when `wgs` is run with no arguments (help is printed). |
+| `1` | Failure: the store could not be opened, a container was not found, a read or write failed or was refused, an IO error occurred, or (for `diagnose` and the `--dry-run` forms) writes are blocked. |
+| `2` | Usage error: unknown command or option, a missing argument, or a write command without `--backup` or `--dry-run`. Also returned when `wgs` is run with no arguments (help is printed). |
 
 Errors go to standard error as `error: ...`. `wgs compare` exits `0` whether or not it finds
 differences: read its output.
@@ -51,7 +77,9 @@ wgs list <store> [--json]
 ```
 
 Prints the store path, the owning title (package family name), the index sync flags, and one line
-per container: name, state, blob size, last-written time (UTC) and ETag (or `(no etag)`).
+per container: name, state, blob size, last-written time (UTC) and ETag (or `(no etag)`). An
+`adapter:` line names the [game adapter](/guide/adapters) that matched the store, or `generic` when
+none did.
 
 ```console
 $ wgs list "C:\Users\me\AppData\Local\Packages\Some.Game_abc\SystemAppData\wgs"
@@ -71,8 +99,9 @@ wgs diagnose <store> [--json]
 ```
 
 Reports index version, owning title, sync state, container count, and any of these sections that
-are non-empty: invalid state, unsafe to build on, need repair, multi-blob (unsupported), orphaned
-folders. Then it prints each write concern (`BLOCKS WRITES` or `note`) and `writable: yes` or
+are non-empty: invalid state, unsafe to build on, need repair, multi-blob (informational: these
+containers are supported, see [`wgs blobs`](#wgs-blobs)), malformed manifest (damaged), orphaned
+folders. It also prints which adapter matched. Then it prints each write concern (`BLOCKS WRITES` or `note`) and `writable: yes` or
 `writable: no`. Changes nothing.
 
 **Exit code:** `0` when writes are allowed, `1` when the write gate would refuse. This makes it
@@ -91,7 +120,8 @@ wgs extract <store> <container> <out-file>
 ```
 
 Copies one container's blob to a file. Fails if the container does not exist or the read is not
-`Ok` (missing blob, sync in flight, unsupported layout). It notes when the blob was read through
+`Ok` (missing blob, sync in flight, a malformed manifest). A container holding several blobs is
+not a single blob: use [`wgs export`](#wgs-export) or read the blobs with the library. It notes when the blob was read through
 the previous blob id.
 
 ```console
@@ -153,8 +183,9 @@ Compares two snapshots and prints one line per difference, or `identical`:
 wgs put <store> <container> <blob-file> --backup <dir> [--dry-run]
 ```
 
-The only command that writes. It adds a container, or replaces an existing container's blob, with
-the bytes of `<blob-file>`.
+Adds a container, or replaces an existing container's blob, with the bytes of `<blob-file>`. A
+container that holds several blobs is refused rather than have its other blobs dropped; use
+[`wgs import`](#wgs-import) for those.
 
 | Option | Meaning |
 | --- | --- |
@@ -181,15 +212,127 @@ wrote 'ForScience-WC' (1,204,500 bytes) as Modified; backup at D:\backups\before
 The blob you provide must already be in the game's own format. `wgs` treats it as opaque bytes.
 :::
 
-## Commands in development
+## wgs find
 
-::: info Coming soon
-The following commands are being added and are not in the tool yet. This section will document
-each one (arguments, options, exit codes, examples) once they land:
+```console
+wgs find [--package <text>] [--exact] [--json] [--local-app-data <dir>] [--drive-root <dir>]
+```
 
-- discovering wgs stores on the machine,
-- deleting a container,
-- restoring from a backup,
-- exporting and importing containers,
-- process-aware write protection for `put`.
-:::
+Finds wgs stores on this machine without knowing the title: under
+`%LOCALAPPDATA%\Packages\<PackageFamilyName>\SystemAppData\wgs\<XUID>_<SCID>` and
+`<drive>:\XboxGames\GameSave\wgs\...`. It prints the package family name, XUID, SCID and store
+path of each. `--package` filters by package family name (a case-insensitive substring, or the
+whole name with `--exact`). Where a root does not exist it finds nothing and says
+`no wgs stores found`; that is not an error. `--local-app-data` and `--drive-root` search other
+roots. See [`WgsStoreDiscovery`](/api/discovery).
+
+```console
+$ wgs find --package abiotic
+PlayStack.AbioticFactor_3wcqaesafpzfy  xuid 2535466000000000  scid 00000000-0000-0000-0000-000000000000  [LocalAppData]
+  C:\Users\me\AppData\Local\Packages\PlayStack.AbioticFactor_3wcqaesafpzfy\SystemAppData\wgs\2535466000000000_00000000000000000000000000000000
+```
+
+## wgs blobs
+
+```console
+wgs blobs <store> <container> [--json]
+```
+
+Lists the blobs a container's manifest names: name, size on disk, blob id, and `(sync in flight)`
+when the cloud id and the disk id differ. Most containers hold one blob named `Data`; some titles
+keep several per container. Fails on a malformed manifest.
+
+## wgs delete
+
+```console
+wgs delete <store> <container> --backup <dir> [--dry-run]
+```
+
+Deletes a container by one rule (see [the format reference](/wgs-format#deleting-a-container)):
+
+- a container that was **never uploaded** (state `Created`, no ETag) has nothing to tell the cloud,
+  so its index entry is removed and its files are cleared;
+- a container **the cloud knows** (it has an ETag) becomes a `Deleted` tombstone that keeps its
+  ETag, so the deletion can sync. Its files stay in place.
+
+`--dry-run` prints which of the two would happen. A tombstone does not block writes to other
+containers, is not "repaired" back to life, and cannot be written to.
+
+## wgs restore
+
+```console
+wgs restore <store> <backup-folder> --backup <dir> [--dry-run]
+```
+
+Restores a folder made by `wgs backup` (or `CopyStoreTo`) over the store. `--backup <dir>` is where
+a **safety copy of the current store** is taken first; it must be empty or absent. Refused, with
+nothing changed, when the backup is not a valid store (a missing blob, an unreadable manifest, a
+size the index does not match), when it belongs to a different title, or when the write gate
+refuses. The restored index is stamped strictly newer than both the backup and the current store,
+so cloud sync sees the restore as the latest local change; containers the backup recorded as
+`Synced` are recorded as `Modified` (they keep their ETag). `--dry-run` validates the backup and
+shows the gate verdict.
+
+## wgs adapters
+
+```console
+wgs adapters [--json]
+```
+
+Lists the [game adapters](/guide/adapters) in use: id, display name, whether each is built in or a
+plugin (and where it was loaded from), the package families it serves, its container-name
+conventions, and whether it provides a blob inspector, a write gate and a codec. The generic
+fallback is always listed last.
+
+## wgs inspect
+
+```console
+wgs inspect <store> [<container>] [--json]
+```
+
+Describes what each container (or the named one) holds, using the adapter that matches the store.
+For every blob it prints a kind, a one-line summary, the members the payload lists (name, size,
+type, note), notes such as which body could not be decoded and why, decoded text where the payload
+is text, and the adapter codec's verdict. With no matching adapter, or with `--no-builtin-adapters`,
+the generic view reports size, SHA-256 and what the leading bytes show (GVAS magic, zlib, gzip, zip,
+PNG, text or ini). Reads only.
+
+```console
+$ wgs inspect <store> TestWorld-WC
+adapter: Abiotic Factor (Game Pass) (abiotic-factor)
+TestWorld-WC  [world bundle]
+  World 'TestWorld': 3 member(s), 256,497 bytes uncompressed (bundle version 3)
+    Profile/Worlds/TestWorld/WorldSave_MetaData  48,097 bytes  Abiotic_WorldMetadataSave
+    Profile/Worlds/TestWorld/WorldSave_V_Train  4,716 bytes  Abiotic_WorldSave
+    Profile/Worlds/TestWorld/PlayerData/Player_2500000000000001  203,684 bytes  Abiotic_CharacterSave
+  note: Payload method 1 (Oodle), 23,587 compressed bytes.
+  note: Member contents were not decoded: World bundles hold an Oodle-compressed body ...
+  codec Abiotic Factor payload codec (settings ini only): unavailable: World bundles hold an Oodle-compressed body ...
+```
+
+## wgs export
+
+```console
+wgs export <store> <out-folder>
+```
+
+Writes every container's blobs to `<out-folder>/<container>/<blob>` (names made safe for the host
+filesystem) and a `wgs-export.json` manifest listing each container's name, state, ETag, container
+number and each blob's real name, relative file, size and SHA-256. Deleted tombstones are skipped
+and reported. The folder must be empty or absent. It reads the store only, so it needs no backup.
+
+## wgs import
+
+```console
+wgs import <store> <folder> --backup <dir> [--dry-run]
+```
+
+Adds or replaces containers from a folder written by `wgs export` (or laid out the same way by
+hand, as `<container>/<blob>` without a manifest). Every file is read first; with a manifest each
+file's size and SHA-256 must match and no path may leave the folder, otherwise nothing is written.
+A new container is created never-uploaded (no ETag). For an existing container the blobs in the
+folder replace the same-named blobs and any other blobs stay. **ETags and states in the manifest
+are never applied**: only the service issues an ETag. Containers are applied one at a time, each
+through the gate and the concurrent-change check; the first failure stops the import, leaving the
+earlier containers fully written and the later ones untouched. An imported-over tombstone is
+refused. `--dry-run` lists what would be added or replaced and every problem found.

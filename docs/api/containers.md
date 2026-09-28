@@ -18,6 +18,7 @@ One logical container in a wgs folder. All members are settable, but treat the c
 | `State` | `WgsEntryState` | How the container stands against its cloud copy. An undefined raw value reads as `Modified` here. |
 | `RawState` | `uint` | The state as read, so an undefined value can be reported and repaired. |
 | `HasInvalidState` | `bool` | `RawState` is greater than `Created` (5). |
+| `IsPendingDeletion` | `bool` | A well-formed tombstone: state `Deleted` (3) with the ETag the cloud issued. |
 | `StateContradictsEtag` | `bool` | Bit 2 of the state ("never uploaded") must be set if and only if the ETag is empty; true when it is not. |
 | `FolderGuid` | `Guid` | The GUID folder holding the manifest and blob. |
 | `FileTime` | `long` | Entry FILETIME, millisecond granular. |
@@ -74,4 +75,50 @@ public sealed record WgsManifestInfo(Guid Current, Guid Previous, uint BlobCount
 ```
 
 Both blob ids a `container.N` manifest records (the file on disk and the one the cloud last knew),
-and how many blob entries it declares. This package models exactly one.
+and how many blob entries it declares. It describes the first blob of a manifest; the full list is
+[`WgsBlobEntry`](#wgsblobentry).
+
+## WgsBlobEntry
+
+```csharp
+public sealed record WgsBlobEntry(string Name, Guid CloudId, Guid LocalId);
+```
+
+One blob entry of a `container.N` manifest: a name (a 128-byte UTF-16 field) and two GUIDs. `CloudId`
+is the blob id as the cloud last knew it, `LocalId` the file on disk; they differ only while a sync
+is in flight.
+
+## WgsBlobInfo
+
+```csharp
+public sealed record WgsBlobInfo(string Name, Guid CloudId, Guid LocalId, long? Size)
+{
+    public bool SyncInFlight { get; }   // CloudId != LocalId
+}
+```
+
+What `TryListBlobs` reports. `Size` is the on-disk size, or `null` when the file is missing.
+
+## WgsDeleteAction and WgsDeletePlan
+
+```csharp
+public enum WgsDeleteAction { RemoveFromIndex, MarkDeleted, AlreadyDeleted }
+public sealed record WgsDeletePlan(string ContainerName, WgsDeleteAction Action,
+    IReadOnlyList<string> Steps, WgsWriteAssessment Assessment);
+```
+
+## Export and import types
+
+```csharp
+public sealed record WgsExportBlob(string Name, string File, long Size, string Sha256);
+public sealed record WgsExportContainer(string Name, WgsEntryState State, string Etag,
+    byte ContainerNumber, IReadOnlyList<WgsExportBlob> Blobs);
+public sealed record WgsExportManifest(string Format, int Version, string PackageFamilyName,
+    IReadOnlyList<WgsExportContainer> Containers);
+public sealed record WgsImportItem(string ContainerName, bool IsNew, IReadOnlyList<string> BlobNames, long TotalBytes);
+public sealed record WgsImportPlan(IReadOnlyList<WgsImportItem> Items, IReadOnlyList<string> Problems,
+    WgsWriteAssessment Assessment)
+{
+    public bool CanApply { get; }   // no problems, something to import, and the gate allows it
+}
+```

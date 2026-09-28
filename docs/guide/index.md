@@ -36,6 +36,7 @@ control Xbox cloud sync itself (that cannot be driven from outside the title).
 
 1. [Getting started](/guide/getting-started): open a store, read a blob, write it back.
 2. [Safety model](/guide/safety): what the library enforces and what only you can do.
-3. [Writing a game adapter](/guide/adapter): plug in payload recognition and extra write checks.
-4. [Testing](/guide/testing): run stores against an in-memory filesystem.
-5. [Troubleshooting](/guide/troubleshooting): every status value and what to do about it.
+3. [Adapter hooks](/guide/adapter): payload recognition and extra write checks.
+4. [Game adapters (plugins)](/guide/adapters): the full adapter model, the shipped Abiotic Factor adapter, and adding a title.
+5. [Testing](/guide/testing): run stores against an in-memory filesystem.
+6. [Troubleshooting](/guide/troubleshooting): every status value and what to do about it.

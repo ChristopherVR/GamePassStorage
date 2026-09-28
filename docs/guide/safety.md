@@ -68,7 +68,7 @@ verdict, and `store.EnsureWritable()` to throw `WgsWriteRefusedException` when i
 
 The library keeps only one generation per container (it prunes the superseded manifest and blob),
 so **the backup is your rollback**. Call `store.CopyStoreTo(destination)` before every write. The
-`wgs put` command refuses to run without `--backup`.
+`wgs put`, `delete`, `restore` and `import` commands refuse to run without `--backup` (or `--dry-run`).
 
 Repair is explicit: `ContainersNeedingRepair()` previews it and `RepairRecoveredManifests()`
 performs it. Reading never repairs silently, and repair never touches save data.

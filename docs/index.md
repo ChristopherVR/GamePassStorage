@@ -17,9 +17,9 @@ hero:
       link: https://github.com/ChristopherVR/GamePassStorage
 features:
   - title: Container layer only
-    details: Handles containers.index, container.N manifests and GUID blobs. What is inside a blob belongs to your game and plugs in through small adapter interfaces.
-    link: /guide/adapter
-    linkText: Write an adapter
+    details: Handles containers.index, container.N manifests and GUID blobs. What is inside a blob belongs to a game adapter. One ships for Abiotic Factor, more load as plugins, and a generic model covers every other title.
+    link: /guide/adapters
+    linkText: Game adapters
   - title: Built around cloud sync
     details: ETags are echoed, never minted. The index timestamp always advances. Unresolved conflicts are never hidden. Writes go blob, then manifest, then index.
     link: /guide/safety
@@ -29,7 +29,7 @@ features:
     link: /guide/testing
     linkText: Test your code
   - title: A command-line tool
-    details: List, diagnose, extract, back up, snapshot, compare and put, with a backup required before any write.
+    details: List, diagnose, inspect, extract, back up, snapshot, compare, put, delete, restore, export and import, with a backup required before any write.
     link: /cli/
     linkText: CLI reference
   - title: Documented format

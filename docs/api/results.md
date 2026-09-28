@@ -41,7 +41,7 @@ public enum WgsOperationStatus
 | `Refused` | The write gate refused (unresolved conflict, unsafe state, platform concern). |
 | `LockConflict` | A file was held by another process (sharing violation or access denied). |
 | `ConcurrentChange` | The store on disk no longer matches what was inspected; re-open and re-evaluate. |
-| `UnsupportedLayout` | A manifest or index shape this package does not model (for instance several blobs). |
+| `UnsupportedLayout` | A manifest or index shape this package does not model (for instance a truncated or malformed manifest). A manifest naming several blobs is supported through `TryReadBlobs`. |
 | `MissingBlob` | The blob a manifest names is missing and no safe alternative exists. |
 | `SyncInFlight` | Two different blobs are on disk: a sync is in flight and nothing says which should win. |
 | `Failed` | Any other IO failure. |
@@ -101,11 +101,16 @@ public sealed record WgsDiagnosis(
     int ContainerCount, IReadOnlyList<string> InvalidStateContainers,
     IReadOnlyList<string> UnsafeStateContainers, IReadOnlyList<string> ContainersNeedingRepair,
     IReadOnlyList<string> MultiBlobContainers, IReadOnlyList<WgsOrphanedContainer> Orphans,
-    WgsWriteAssessment WriteAssessment);
+    WgsWriteAssessment WriteAssessment)
+{
+    public IReadOnlyList<string> MalformedManifestContainers { get; init; }
+}
 ```
 
-Returned by `WgsStore.Diagnose()`. `MultiBlobContainers` lists containers whose manifest declares
-more than one blob.
+Returned by `WgsStore.Diagnose()`. `MultiBlobContainers` lists containers whose valid manifest names
+more than one blob; this is informational, they are supported. `MalformedManifestContainers` lists
+containers whose manifest exists but cannot be parsed (truncated, a blob count its length does not
+support, a repeated blob name): that is damage.
 
 ## WgsWriteRefusedException
 
@@ -119,3 +124,36 @@ public sealed class WgsWriteRefusedException : InvalidOperationException
 
 Thrown by the throwing write paths (`WriteBlob`, `AddOrReplaceContainer`, `ReRegisterOrphan`,
 `EnsureWritable`) when the write gate refuses. Its message is the assessment's blocking message.
+
+## WgsBlobsReadResult and WgsBlobListResult
+
+```csharp
+public sealed record WgsBlobsReadResult(WgsOperationStatus Status, IReadOnlyDictionary<string, byte[]>? Blobs,
+    string? Message, bool UsedFallback);
+public sealed record WgsBlobListResult(WgsOperationStatus Status, IReadOnlyList<WgsBlobInfo>? Blobs, string? Message);
+```
+
+Both have `Succeeded` (`Status == Ok`). `Blobs` is set only on success.
+
+## WgsRestoreResult
+
+```csharp
+public sealed record WgsRestoreResult(WgsOperationStatus Status, WgsStore? Store, string? Message,
+    string? SafetyCopyPath, IReadOnlyList<string> Problems);
+```
+
+`Store` is the reopened store on success. `SafetyCopyPath` is where the previous store was copied
+(null when refused before that). `Problems` lists why a backup was judged not to be a valid store.
+`Refused` covers an invalid backup, a different title, an unreadable current store, a folder clash
+and a gate refusal.
+
+## WgsExportResult and WgsImportResult
+
+```csharp
+public sealed record WgsExportResult(WgsOperationStatus Status, WgsExportManifest? Manifest,
+    IReadOnlyList<string> Skipped, string? Message);
+public sealed record WgsImportResult(WgsOperationStatus Status, IReadOnlyList<string> Applied, string? Message);
+```
+
+`Skipped` lists containers an export left out (deleted tombstones). On a failed import `Applied`
+lists the containers already written; the failing one and the rest were not.
