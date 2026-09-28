@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The `wgs` command-line tool: inspect, back up, fingerprint and (carefully) write Xbox
+       Connected Storage save folders. A thin shell over the GamePassStorage library. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>GamePassStorage.Tool</RootNamespace>
+    <AssemblyName>wgs</AssemblyName>
+
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>wgs</ToolCommandName>
+    <PackageId>GamePassStorage.Tool</PackageId>
+    <Title>wgs: Xbox Connected Storage command-line tool</Title>
+    <Description>Command-line tool for Game Pass (Xbox Connected Storage, "wgs") save folders: list containers, diagnose health, extract and replace blobs, take whole-folder backups, and fingerprint a store before and after a cloud sync.</Description>
+    <PackageTags>xbox;game-pass;connected-storage;wgs;save-editor;game-tools;dotnet-tool</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <ProjectReference Include="..\GamePassStorage\GamePassStorage.csproj" />
+  </ItemGroup>
+
+</Project>

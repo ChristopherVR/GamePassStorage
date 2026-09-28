@@ -12,7 +12,29 @@ It was extracted from [Abiotic Editor](https://github.com/ChristopherVR/AbioticE
 it for Abiotic Factor's Game Pass saves. That is the only title verified so far; see
 [Supported titles](#supported-titles).
 
-## Quick start
+## Install
+
+```console
+dotnet add package GamePassStorage          # the library
+dotnet tool install -g GamePassStorage.Tool # the `wgs` command-line tool
+```
+
+## Command-line tool
+
+```console
+wgs list      <store> [--json]                  # containers, states, sizes, ETags
+wgs diagnose  <store> [--json]                  # health report; exits 1 when writes are blocked
+wgs extract   <store> <container> <out-file>    # copy a blob out
+wgs backup    <store> <destination>             # whole-folder copy
+wgs snapshot  <store> -o before.json            # SHA-256 fingerprint of every container
+wgs compare   before.json after.json            # what a cloud sync changed
+wgs put       <store> <container> <blob> --backup <dir> [--dry-run]
+```
+
+`put` is the only command that writes. It refuses without a backup folder, takes the backup
+first, and goes through the same write gate and concurrent-change check as the library.
+
+## Library quick start
 
 ```csharp
 using GamePassStorage;
@@ -87,6 +109,18 @@ Requires the .NET 10 SDK.
 dotnet build GamePassStorage.slnx
 dotnet test  GamePassStorage.slnx
 ```
+
+## Releasing
+
+Pushing a version tag publishes both packages to nuget.org and creates a GitHub release:
+
+```console
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow (`.github/workflows/publish.yml`) needs a repository secret named `NUGET_API_KEY`.
+It can also be run by hand from the Actions tab with a version number.
 
 ## License
 

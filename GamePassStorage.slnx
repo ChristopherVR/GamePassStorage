@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/GamePassStorage/GamePassStorage.csproj" />
+    <Project Path="src/GamePassStorage.Tool/GamePassStorage.Tool.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/GamePassStorage.Tests/GamePassStorage.Tests.csproj" />
