@@ -19,11 +19,14 @@ namespace GamePassStorage;
 /// actually happened, the ETag is echoed rather than invented, and unknown fields round-trip
 /// verbatim. See docs/reference/game-pass-format.md.</para>
 /// </summary>
-public sealed class WgsStore
+public sealed partial class WgsStore
 {
     public const string IndexFileName = "containers.index";
     private const string BlobEntryName = "Data";
     private const int BlobNameFieldBytes = 128; // fixed UTF-16 field in container.N
+    private const int ManifestHeaderBytes = 8;  // u32 constant + u32 blob count
+    private const int ManifestEntryBytes = BlobNameFieldBytes + 32; // name + two GUIDs
+    private const int MaxManifestBlobs = 1024;  // sanity cap so a corrupt count cannot demand gigabytes
 
     /// <summary>The only index version observed in real stores.</summary>
     public const uint KnownIndexVersion = 14;
@@ -69,10 +72,21 @@ public sealed class WgsStore
     public IReadOnlyList<string> InvalidStateContainers
         => _containers.Where(c => c.HasInvalidState || c.StateContradictsEtag).Select(c => c.Name).ToList();
 
-    /// <summary>Containers a write must not build on: undefined state, or a deletion tombstone.</summary>
+    /// <summary>
+    /// Containers a write must not build on: an undefined state, or a Deleted entry that is not a
+    /// well-formed tombstone. A well-formed tombstone (state 3 with the ETag the cloud issued, which
+    /// is exactly what <see cref="DeleteContainer"/> leaves behind) is listed by
+    /// <see cref="PendingDeletionContainers"/> instead and does not block writes to other containers.
+    /// </summary>
     public IReadOnlyList<string> UnsafeStateContainers
-        => _containers.Where(c => c.HasInvalidState || c.State == WgsEntryState.Deleted)
-            .Select(c => c.Name).ToList();
+        => _containers.Where(IsUnsafeState).Select(c => c.Name).ToList();
+
+    /// <summary>Containers deleted locally whose tombstone is waiting for the cloud to learn of it.</summary>
+    public IReadOnlyList<string> PendingDeletionContainers
+        => _containers.Where(c => c.IsPendingDeletion).Select(c => c.Name).ToList();
+
+    private static bool IsUnsafeState(WgsContainer c)
+        => c.HasInvalidState || (c.State == WgsEntryState.Deleted && !c.IsPendingDeletion);
 
     /// <summary>Containers whose state and ETag contradict each other (a write puts them right).</summary>
     public IReadOnlyList<string> ContradictoryStateContainers
@@ -159,6 +173,11 @@ public sealed class WgsStore
     {
         var d = _fs.ReadAllBytes(Path.Combine(_root, IndexFileName));
         _indexFingerprint = Fingerprint(d);
+        ParseIndex(d);
+    }
+
+    private void ParseIndex(byte[] d)
+    {
         var pos = 0;
 
         IndexVersion = ReadU32(d, ref pos);
@@ -237,25 +256,32 @@ public sealed class WgsStore
     public WgsDiagnosis Diagnose()
     {
         var multi = new List<string>();
+        var malformed = new List<string>();
         foreach (var c in _containers)
         {
             try
             {
-                if (ReadManifest(Path.Combine(_root, c.FolderName), c.ContainerNumber).BlobCount != 1)
+                if (ReadManifestFile(Path.Combine(_root, c.FolderName), c.ContainerNumber).Entries.Count > 1)
                 {
                     multi.Add(c.Name);
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
-                or ArgumentException)
+            catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
             {
-                // A manifest that cannot be read is not something Diagnose can classify.
+                malformed.Add(c.Name);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A manifest that cannot be opened (missing, locked) is not something Diagnose can classify.
             }
         }
         return new WgsDiagnosis(
             IndexVersion, IndexVersion == KnownIndexVersion, PackageFamilyName, SyncState, _containers.Count,
             InvalidStateContainers, UnsafeStateContainers, ContainersNeedingRepair(), multi,
-            OrphanedContainers(), AssessWrite());
+            OrphanedContainers(), AssessWrite())
+        {
+            MalformedManifestContainers = malformed,
+        };
     }
 
     /// <summary>The write gate's verdict right now.</summary>
@@ -313,7 +339,10 @@ public sealed class WgsStore
             var folder = Path.Combine(_root, container.FolderName);
             try
             {
-                var (current, previous) = ReadManifestBlobGuids(folder, container.ContainerNumber);
+                var manifest = ReadManifestFile(folder, container.ContainerNumber);
+                // Folder-scan repair only makes sense for one blob; a multi-blob manifest is never guessed at.
+                if (manifest.Entries.Count != 1) continue;
+                var (current, previous) = (manifest.Entries[0].LocalId, manifest.Entries[0].CloudId);
                 if (_fs.FileExists(Path.Combine(folder, BlobFileName(current)))) continue;
                 if (previous != current && _fs.FileExists(Path.Combine(folder, BlobFileName(previous))))
                 {
@@ -322,7 +351,8 @@ public sealed class WgsStore
                 }
                 if (FindFallbackBlob(folder, current, container.BlobSize) is not null) needing.Add(container.Name);
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
+                or ArgumentException)
             {
                 // An unreadable manifest is not something repair can mend either.
             }
@@ -334,7 +364,7 @@ public sealed class WgsStore
     public const string CloudConflictLabel = "the unsettled Xbox conflict";
 
     private static bool NeedsStateRepair(WgsContainer c)
-        => c.HasInvalidState || c.State == WgsEntryState.Deleted || c.StateContradictsEtag;
+        => IsUnsafeState(c) || c.StateContradictsEtag;
 
     // ------------------------------------------------------------------------------------
     // Reading blobs
@@ -373,14 +403,25 @@ public sealed class WgsStore
     private WgsReadResult ResolveBlob(WgsContainer container, bool strictLayout)
     {
         var folder = Path.Combine(_root, container.FolderName);
-        var manifest = ReadManifest(folder, container.ContainerNumber);
-        if (strictLayout && manifest.BlobCount != 1)
+        var manifest = ReadManifestFile(folder, container.ContainerNumber);
+        if (strictLayout && manifest.Entries.Count != 1)
         {
             return new WgsReadResult(WgsOperationStatus.UnsupportedLayout, null,
-                $"'{container.Name}' declares {manifest.BlobCount} blobs; this package models one.", false);
+                $"'{container.Name}' holds {manifest.Entries.Count} blobs; read them with TryReadBlobs.", false);
         }
-        var blobGuid = manifest.Current;
-        var previousGuid = manifest.Previous;
+        return ResolveEntry(container, folder, manifest.Entries[0], allowFolderScan: manifest.Entries.Count == 1,
+            container.Name);
+    }
+
+    /// <summary>
+    /// Resolves one manifest entry to bytes. The folder-scan last resort is offered only when the
+    /// manifest names a single blob, because with several blobs a size match cannot say which is which.
+    /// </summary>
+    private WgsReadResult ResolveEntry(WgsContainer container, string folder, WgsBlobEntry entry,
+        bool allowFolderScan, string label)
+    {
+        var blobGuid = entry.LocalId;
+        var previousGuid = entry.CloudId;
         var blobPath = Path.Combine(folder, BlobFileName(blobGuid));
         var previousPath = Path.Combine(folder, BlobFileName(previousGuid));
         var haveCurrent = _fs.FileExists(blobPath);
@@ -392,7 +433,7 @@ public sealed class WgsStore
         {
             MarkRecovered(container.Name);
             return new WgsReadResult(WgsOperationStatus.SyncInFlight, null,
-                $"'{container.Name}' has two versions of its data on disk ({blobGuid:N} and {previousGuid:N}), "
+                $"'{label}' has two versions of its data on disk ({blobGuid:N} and {previousGuid:N}), "
                 + "which means Xbox is part-way through syncing this save. Close the game and the Xbox app, "
                 + "wait for syncing to finish, and open it again.", false);
         }
@@ -405,19 +446,19 @@ public sealed class WgsStore
         {
             MarkRecovered(container.Name);
             _options.Log.Warn(
-                $"Save blob '{blobGuid:N}' for '{container.Name}' is not on disk; using the previous one "
+                $"Save blob '{blobGuid:N}' for '{label}' is not on disk; using the previous one "
                 + $"the manifest names ('{previousGuid:N}'). Xbox has not finished syncing this save.");
             return new WgsReadResult(WgsOperationStatus.Ok, _fs.ReadAllBytes(previousPath), null, true);
         }
 
         // Last resort: the only other GUID-named blob in the folder, and only when its size matches
         // what the index records for this container.
-        var fallback = FindFallbackBlob(folder, blobGuid, container.BlobSize);
+        var fallback = allowFolderScan ? FindFallbackBlob(folder, blobGuid, container.BlobSize) : null;
         if (fallback is not null)
         {
             MarkRecovered(container.Name);
             _options.Log.Warn(
-                $"Save blob '{blobGuid:N}' for '{container.Name}' not found on disk - " +
+                $"Save blob '{blobGuid:N}' for '{label}' not found on disk - " +
                 $"using existing blob '{Path.GetFileName(fallback)}' as a fallback. " +
                 "This means Xbox cloud sync has not finished for this save; reading works but writing " +
                 "now risks Xbox discarding the change. The save was read successfully.");
@@ -425,7 +466,7 @@ public sealed class WgsStore
         }
 
         return new WgsReadResult(WgsOperationStatus.MissingBlob, null,
-            $"Save data blob for '{container.Name}' is missing (expected {blobGuid:N}). " +
+            $"Save data blob for '{label}' is missing (expected {blobGuid:N}). " +
             "Xbox cloud sync may not have finished downloading this save - " +
             "close the game completely, wait for sync to complete, and try again.", false);
     }
@@ -487,10 +528,12 @@ public sealed class WgsStore
         foreach (var container in _containers)
         {
             var folder = Path.Combine(_root, container.FolderName);
-            Guid expected;
-            try { expected = ReadManifestBlobGuid(folder, container.ContainerNumber); }
+            ManifestFile manifest;
+            try { manifest = ReadManifestFile(folder, container.ContainerNumber); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
                 or ArgumentException) { continue; }
+            if (manifest.Entries.Count != 1) continue;   // never guess which blob is which
+            var expected = manifest.Entries[0].LocalId;
 
             if (_fs.FileExists(Path.Combine(folder, BlobFileName(expected))))
             {
@@ -503,7 +546,8 @@ public sealed class WgsStore
             var fallbackName = Path.GetFileName(fallback);
             if (!Guid.TryParseExact(fallbackName, "N", out var fallbackGuid)) continue;
 
-            WriteManifest(folder, container.ContainerNumber, fallbackGuid);
+            WriteManifestFile(_fs, folder, container.ContainerNumber, manifest.Header,
+                [new WgsBlobEntry(manifest.Entries[0].Name, fallbackGuid, fallbackGuid)], manifest.Tail);
             var actualSize = _fs.GetFileLength(fallback);
             if (container.BlobSize != actualSize) { container.BlobSize = actualSize; indexNeedsRewrite = true; }
 
@@ -672,33 +716,15 @@ public sealed class WgsStore
     /// Writes new blob bytes for a container: a fresh GUID blob, a new <c>container.&lt;N+1&gt;</c>
     /// manifest, an updated index entry, then removal of the superseded generation. The ETag is left
     /// alone (only the service may issue one). Throws when the write gate refuses.
+    /// For a container whose manifest names several blobs this throws rather than drop the others;
+    /// use <see cref="WriteNamedBlob"/> or <see cref="WriteBlobs"/>.
     /// </summary>
     public void WriteBlob(WgsContainer container, byte[] blob)
     {
         ArgumentNullException.ThrowIfNull(container);
         ArgumentNullException.ThrowIfNull(blob);
-        EnsureWritable();
-        var folder = Path.Combine(_root, container.FolderName);
-        _fs.CreateDirectory(folder);
-
-        var newBlobGuid = Guid.NewGuid();
-        _fs.WriteAllBytes(Path.Combine(folder, BlobFileName(newBlobGuid)), blob);
-
-        var newNumber = unchecked((byte)(container.ContainerNumber + 1));
-        WriteManifest(folder, newNumber, newBlobGuid);
-
-        container.ContainerNumber = newNumber;
-        container.BlobSize = blob.Length;
-        container.FileTime = NowEntryFileTime();
-
-        // A container that has never been uploaded has no ETag and stays Created, because the state
-        // and the ETag have to keep agreeing (see WgsContainer.StateContradictsEtag).
-        container.State = string.IsNullOrEmpty(container.Etag) ? WgsEntryState.Created : WgsEntryState.Modified;
-        container.RawState = (uint)container.State;
-
-        WriteIndex();
-        PruneSupersededGenerations(folder, newNumber, newBlobGuid);
-        _options.Log.Info($"wgs: wrote container '{container.Name}' as {container.State}, container.{newNumber} ({blob.Length} bytes).");
+        CommitGeneration(container, new Dictionary<string, byte[]>(StringComparer.Ordinal) { [string.Empty] = blob },
+            legacySingle: true);
     }
 
     /// <summary>
@@ -721,7 +747,7 @@ public sealed class WgsStore
         return Commit(containerName, () => { AddOrReplaceContainer(containerName, blob); return Find(containerName)!; });
     }
 
-    private WgsCommitResult Commit(string containerName, Func<WgsContainer> write)
+    private WgsCommitResult Commit(string containerName, Func<WgsContainer?> write)
     {
         var assessment = AssessWrite();
         if (!assessment.CanWrite)
@@ -747,7 +773,8 @@ public sealed class WgsStore
             return new WgsCommitResult(WgsOperationStatus.LockConflict, null,
                 $"'{containerName}' could not be written because a file is in use or access was denied: {ex.Message}", assessment);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
+            or InvalidOperationException or ArgumentException)
         {
             return new WgsCommitResult(WgsOperationStatus.Failed, null, ex.Message, assessment);
         }
@@ -767,46 +794,36 @@ public sealed class WgsStore
             WriteBlob(existing, blob);
             return;
         }
-
-        EnsureWritable();
-        var folderGuid = Guid.NewGuid();
-        var folder = Path.Combine(_root, folderGuid.ToString("N").ToUpperInvariant());
-        _fs.CreateDirectory(folder);
-        var blobGuid = Guid.NewGuid();
-        _fs.WriteAllBytes(Path.Combine(folder, BlobFileName(blobGuid)), blob);
-        WriteManifest(folder, 1, blobGuid);
-
-        _containers.Add(new WgsContainer
-        {
-            Name = containerName,
-            Name2 = containerName,
-            // No ETag: the service has never seen this container. It issues one on first upload.
-            Etag = string.Empty,
-            ContainerNumber = 1,
-            State = WgsEntryState.Created,
-            RawState = (uint)WgsEntryState.Created,
-            FolderGuid = folderGuid,
-            FileTime = NowEntryFileTime(),
-            Reserved = 0,
-            BlobSize = blob.Length,
-        });
-        WriteIndex();
-        _options.Log.Info($"wgs: added container '{containerName}' to {_root} ({blob.Length} bytes).");
+        CreateContainerCore(containerName, new Dictionary<string, byte[]>(StringComparer.Ordinal) { [BlobEntryName] = blob });
     }
 
     /// <summary>
-    /// Creates a brand-new single-container store at <paramref name="destFolder"/>. Refuses a folder
-    /// that already holds a <c>containers.index</c>, since the index it writes describes one
-    /// container and would orphan the rest.
+    /// Creates a brand-new store at <paramref name="destFolder"/> holding one container. Refuses a
+    /// folder that already holds a <c>containers.index</c>, since the index it writes describes one
+    /// container and would orphan the rest. The container's single blob is named <c>Data</c>.
     /// </summary>
     /// <param name="packageFamilyName">Recorded in the index to identify the owning title.</param>
     public static void WriteNewContainer(string destFolder, string containerName, byte[] blob,
         string packageFamilyName, WgsStoreOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(blob);
+        WriteNewContainer(destFolder, containerName,
+            new Dictionary<string, byte[]>(StringComparer.Ordinal) { [BlobEntryName] = blob },
+            packageFamilyName, options);
+    }
+
+    /// <summary>
+    /// Creates a brand-new store at <paramref name="destFolder"/> whose one container holds several
+    /// named blobs (manifest layout: see <see cref="WgsBlobEntry"/>).
+    /// </summary>
+    public static void WriteNewContainer(string destFolder, string containerName,
+        IReadOnlyDictionary<string, byte[]> blobs, string packageFamilyName, WgsStoreOptions? options = null)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(destFolder);
         ArgumentException.ThrowIfNullOrWhiteSpace(containerName);
-        ArgumentNullException.ThrowIfNull(blob);
+        ArgumentNullException.ThrowIfNull(blobs);
         ArgumentNullException.ThrowIfNull(packageFamilyName);
+        ValidateBlobSet(blobs);
         var opts = options ?? WgsStoreOptions.Default;
         var fs = opts.FileSystem;
         if (IsContainerFolder(destFolder, fs))
@@ -821,9 +838,8 @@ public sealed class WgsStore
         var folder = Path.Combine(destFolder, folderGuid.ToString("N").ToUpperInvariant());
         fs.CreateDirectory(folder);
 
-        var blobGuid = Guid.NewGuid();
-        fs.WriteAllBytes(Path.Combine(folder, BlobFileName(blobGuid)), blob);
-        WriteManifest(fs, folder, 1, blobGuid);
+        var (entries, total) = WriteFreshBlobs(fs, folder, blobs, []);
+        WriteManifestFile(fs, folder, 1, DefaultManifestHeader, entries, []);
 
         var now = NowEntryFileTime(opts.Clock);
         using var ms = new MemoryStream();
@@ -844,10 +860,10 @@ public sealed class WgsStore
         w.Write(folderGuid.ToByteArray());
         w.Write(now);                              // entry FILETIME
         w.Write(0L);                               // reserved
-        w.Write((long)blob.Length);
+        w.Write(total);
         w.Flush();
         WriteFileAtomic(fs, Path.Combine(destFolder, IndexFileName), ms.ToArray());
-        opts.Log.Info($"Created wgs container '{containerName}' at {destFolder} ({blob.Length} bytes).");
+        opts.Log.Info($"Created wgs container '{containerName}' at {destFolder} ({total} bytes).");
     }
 
     /// <summary>Copies the whole store folder to <paramref name="destination"/> (the rollback for a write).</summary>
@@ -869,9 +885,223 @@ public sealed class WgsStore
         }
     }
 
-    private void PruneSupersededGenerations(string folder, byte keepNumber, Guid keepBlob)
+    /// <summary>
+    /// The one place a new generation of an existing container is written: fresh GUID blobs for the
+    /// blobs being changed, then <c>container.N+1</c>, then the index, then a prune. Blobs that are not
+    /// being changed keep their files and ids untouched. If anything before the prune fails, the
+    /// files this attempt created are removed and the in-memory entry is restored, so the previous
+    /// generation stays the only one described.
+    /// </summary>
+    private void CommitGeneration(WgsContainer container, IReadOnlyDictionary<string, byte[]> requested, bool legacySingle)
     {
-        var keepBlobName = BlobFileName(keepBlob);
+        EnsureWritable();
+        if (container.RawState == (uint)WgsEntryState.Deleted)
+        {
+            throw new WgsWriteRefusedException(
+                $"'{container.Name}' has been deleted and is waiting for that to reach the cloud; it cannot be written to.");
+        }
+        var folder = Path.Combine(_root, container.FolderName);
+
+        ManifestFile? existing = null;
+        try
+        {
+            existing = ReadManifestFile(folder, container.ContainerNumber);
+        }
+        catch (Exception ex) when (legacySingle && ex is IOException or InvalidDataException or ArgumentException)
+        {
+            // The single-blob path has always been able to write over a manifest it cannot read.
+        }
+        var old = existing?.Entries ?? [];
+
+        IReadOnlyDictionary<string, byte[]> changes = requested;
+        if (legacySingle)
+        {
+            if (old.Count > 1)
+            {
+                throw new InvalidDataException(
+                    $"'{container.Name}' holds {old.Count} blobs; writing one blob over it would drop the others. "
+                    + "Use WriteNamedBlob or WriteBlobs.");
+            }
+            changes = new Dictionary<string, byte[]>(StringComparer.Ordinal)
+            {
+                [old.Count == 1 ? old[0].Name : BlobEntryName] = requested[string.Empty],
+            };
+        }
+        else
+        {
+            ValidateBlobSet(changes);
+            foreach (var name in changes.Keys)
+            {
+                if (old.Any(e => string.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(e.Name, name, StringComparison.Ordinal)))
+                {
+                    throw new ArgumentException($"'{container.Name}' already has a blob whose name differs from '{name}' only by case.");
+                }
+            }
+        }
+
+        // Blobs that are not being changed must be intact and settled, or the new manifest would
+        // carry a claim this store cannot back.
+        foreach (var e in old.Where(e => !changes.ContainsKey(e.Name)))
+        {
+            if (e.CloudId != e.LocalId)
+            {
+                throw new WgsWriteRefusedException(
+                    $"'{container.Name}/{e.Name}' is part-way through an Xbox sync ({e.CloudId:N} vs {e.LocalId:N}); wait for it to finish.");
+            }
+            if (!_fs.FileExists(Path.Combine(folder, BlobFileName(e.LocalId))))
+            {
+                throw new WgsWriteRefusedException(
+                    $"The data for '{container.Name}/{e.Name}' is missing from disk; writing now would drop it.");
+            }
+        }
+
+        var newNumber = unchecked((byte)(container.ContainerNumber + 1));
+        var saved = (container.ContainerNumber, container.BlobSize, container.FileTime, container.State, container.RawState);
+        var created = new List<string>();
+        try
+        {
+            _fs.CreateDirectory(folder);
+            var newEntries = new List<WgsBlobEntry>();
+            long total = 0;
+            foreach (var e in old)
+            {
+                if (changes.TryGetValue(e.Name, out var data))
+                {
+                    var g = Guid.NewGuid();
+                    var path = Path.Combine(folder, BlobFileName(g));
+                    _fs.WriteAllBytes(path, data);
+                    created.Add(path);
+                    newEntries.Add(new WgsBlobEntry(e.Name, g, g));
+                    total += data.Length;
+                }
+                else
+                {
+                    newEntries.Add(e);
+                    total += _fs.GetFileLength(Path.Combine(folder, BlobFileName(e.LocalId)));
+                }
+            }
+            foreach (var (name, data) in changes.Where(c => !old.Any(e => e.Name == c.Key)))
+            {
+                var g = Guid.NewGuid();
+                var path = Path.Combine(folder, BlobFileName(g));
+                _fs.WriteAllBytes(path, data);
+                created.Add(path);
+                newEntries.Add(new WgsBlobEntry(name, g, g));
+                total += data.Length;
+            }
+
+            WriteManifestFile(_fs, folder, newNumber, existing?.Header ?? DefaultManifestHeader, newEntries,
+                existing?.Tail ?? []);
+            created.Add(Path.Combine(folder, $"container.{newNumber}"));
+
+            container.ContainerNumber = newNumber;
+            container.BlobSize = total;
+            container.FileTime = NowEntryFileTime();
+
+            // A container that has never been uploaded has no ETag and stays Created, because the state
+            // and the ETag have to keep agreeing (see WgsContainer.StateContradictsEtag).
+            container.State = string.IsNullOrEmpty(container.Etag) ? WgsEntryState.Created : WgsEntryState.Modified;
+            container.RawState = (uint)container.State;
+
+            WriteIndex();
+
+            var keep = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var e in newEntries)
+            {
+                keep.Add(BlobFileName(e.LocalId));
+                keep.Add(BlobFileName(e.CloudId));
+            }
+            PruneSupersededGenerations(folder, newNumber, keep);
+            _options.Log.Info($"wgs: wrote container '{container.Name}' as {container.State}, container.{newNumber} ({total} bytes, {newEntries.Count} blob(s)).");
+        }
+        catch
+        {
+            (container.ContainerNumber, container.BlobSize, container.FileTime, container.State, container.RawState) = saved;
+            RemoveBestEffort(created);
+            throw;
+        }
+    }
+
+    /// <summary>Creates a container in an existing store: fresh folder, blobs, manifest 1, then the index.</summary>
+    private WgsContainer CreateContainerCore(string containerName, IReadOnlyDictionary<string, byte[]> blobs)
+    {
+        ValidateBlobSet(blobs);
+        if (Find(containerName) is not null)
+        {
+            throw new InvalidOperationException($"This store already has a container called '{containerName}'.");
+        }
+        EnsureWritable();
+
+        var folderGuid = Guid.NewGuid();
+        var folder = Path.Combine(_root, folderGuid.ToString("N").ToUpperInvariant());
+        var created = new List<string>();
+        WgsContainer? added = null;
+        try
+        {
+            _fs.CreateDirectory(folder);
+            var (entries, total) = WriteFreshBlobs(_fs, folder, blobs, created);
+            WriteManifestFile(_fs, folder, 1, DefaultManifestHeader, entries, []);
+            created.Add(Path.Combine(folder, "container.1"));
+
+            added = new WgsContainer
+            {
+                Name = containerName,
+                Name2 = containerName,
+                // No ETag: the service has never seen this container. It issues one on first upload.
+                Etag = string.Empty,
+                ContainerNumber = 1,
+                State = WgsEntryState.Created,
+                RawState = (uint)WgsEntryState.Created,
+                FolderGuid = folderGuid,
+                FileTime = NowEntryFileTime(),
+                Reserved = 0,
+                BlobSize = total,
+            };
+            _containers.Add(added);
+            WriteIndex();
+            _options.Log.Info($"wgs: added container '{containerName}' to {_root} ({total} bytes, {entries.Count} blob(s)).");
+            return added;
+        }
+        catch
+        {
+            if (added is not null) _containers.Remove(added);
+            RemoveBestEffort(created);
+            throw;
+        }
+    }
+
+    private static (List<WgsBlobEntry> Entries, long Total) WriteFreshBlobs(IWgsFileSystem fs, string folder,
+        IReadOnlyDictionary<string, byte[]> blobs, List<string> created)
+    {
+        var entries = new List<WgsBlobEntry>();
+        long total = 0;
+        foreach (var (name, data) in blobs)
+        {
+            var g = Guid.NewGuid();
+            var path = Path.Combine(folder, BlobFileName(g));
+            fs.WriteAllBytes(path, data);
+            created.Add(path);
+            entries.Add(new WgsBlobEntry(name, g, g));
+            total += data.Length;
+        }
+        return (entries, total);
+    }
+
+    private void RemoveBestEffort(IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            try { if (_fs.FileExists(path)) _fs.DeleteFile(path); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _options.Log.Warn($"Could not remove '{path}' after an interrupted write: {ex.Message}");
+            }
+        }
+    }
+
+    private void PruneSupersededGenerations(string folder, byte keepNumber, HashSet<string> keepBlobNames)
+    {
         var keepManifest = $"container.{keepNumber}";
         try
         {
@@ -882,7 +1112,7 @@ public sealed class WgsStore
                 var isBlob = name.Length == 32 && IsHex(name);
                 if (!isManifest && !isBlob) continue;
                 if (isManifest && name.Equals(keepManifest, StringComparison.OrdinalIgnoreCase)) continue;
-                if (isBlob && name.Equals(keepBlobName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (isBlob && keepBlobNames.Contains(name)) continue;
 
                 try { _fs.DeleteFile(file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -900,6 +1130,8 @@ public sealed class WgsStore
     // ------------------------------------------------------------------------------------
     // Manifest + index encoding
     // ------------------------------------------------------------------------------------
+
+    private const uint DefaultManifestHeader = 4;
 
     private long NowEntryFileTime() => NowEntryFileTime(_options.Clock);
 
@@ -919,46 +1151,88 @@ public sealed class WgsStore
         }
     }
 
-    private Guid ReadManifestBlobGuid(string folder, byte number) => ReadManifestBlobGuids(folder, number).Current;
+    private Guid ReadManifestBlobGuid(string folder, byte number) => ReadManifestFile(folder, number).Entries[0].LocalId;
 
-    private (Guid Current, Guid Previous) ReadManifestBlobGuids(string folder, byte number)
+    /// <summary>A parsed <c>container.N</c>: the leading constant, every blob entry, and any bytes after the last entry.</summary>
+    private sealed record ManifestFile(uint Header, List<WgsBlobEntry> Entries, byte[] Tail);
+
+    private ManifestFile ReadManifestFile(string folder, byte number)
     {
-        var m = ReadManifest(folder, number);
-        return (m.Current, m.Previous);
+        var path = Path.Combine(folder, $"container.{number}");
+        return ParseManifest(path, _fs.ReadAllBytes(path));
     }
 
     /// <summary>
-    /// Both blob ids a <c>container.N</c> manifest records. The first names the blob as the cloud
-    /// last knew it, the second the file on disk; they differ only while a sync is in flight.
+    /// Parses a manifest strictly. Layout (Z1ni/XGP-save-extractor, LukeFZ/XblContainerReader,
+    /// Fr33dan/GPSaveConverter, libNOM.io): <c>u32</c> constant (4), <c>u32</c> blob count, then per
+    /// blob a 128-byte UTF-16 name field and two 16-byte GUIDs, with nothing after the last entry.
+    /// Anything shorter than the count promises, a zero or absurd count, or a repeated name is <see cref="InvalidDataException"/>. Bytes after the last entry are kept as a tail and
+    /// written back verbatim rather than guessed at.
     /// </summary>
-    private WgsManifestInfo ReadManifest(string folder, byte number)
+    private static ManifestFile ParseManifest(string path, byte[] d)
     {
-        var path = Path.Combine(folder, $"container.{number}");
-        var d = _fs.ReadAllBytes(path);
-        var pos = 0;
-        ReadU32(d, ref pos);                 // constant (4)
-        var blobCount = ReadU32(d, ref pos);
-        if (blobCount < 1) throw new InvalidDataException($"{path} declares no blobs.");
-        pos += BlobNameFieldBytes;           // fixed "Data" name field
-        var previous = new Guid(d.AsSpan(pos, 16).ToArray());
-        var current = new Guid(d.AsSpan(pos + 16, 16).ToArray());
-        return new WgsManifestInfo(current, previous, blobCount);
+        if (d.Length < ManifestHeaderBytes) throw new InvalidDataException($"{path} is too short to be a manifest.");
+        var header = BitConverter.ToUInt32(d, 0);
+        var count = BitConverter.ToUInt32(d, 4);
+        if (count < 1) throw new InvalidDataException($"{path} declares no blobs.");
+        if (count > MaxManifestBlobs) throw new InvalidDataException($"{path} declares an implausible {count} blobs.");
+        var end = ManifestHeaderBytes + (int)count * ManifestEntryBytes;
+        if (d.Length < end)
+        {
+            throw new InvalidDataException($"{path} declares {count} blobs but holds only {(d.Length - ManifestHeaderBytes) / ManifestEntryBytes}.");
+        }
+        var entries = new List<WgsBlobEntry>((int)count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var pos = ManifestHeaderBytes;
+        for (var i = 0; i < count; i++)
+        {
+            var field = Encoding.Unicode.GetString(d, pos, BlobNameFieldBytes);
+            var nul = field.IndexOf('\0', StringComparison.Ordinal);
+            var name = nul < 0 ? field : field[..nul];
+            if (!seen.Add(name)) throw new InvalidDataException($"{path} names the blob '{name}' twice.");
+            var cloud = new Guid(d.AsSpan(pos + BlobNameFieldBytes, 16));
+            var local = new Guid(d.AsSpan(pos + BlobNameFieldBytes + 16, 16));
+            entries.Add(new WgsBlobEntry(name, cloud, local));
+            pos += ManifestEntryBytes;
+        }
+        return new ManifestFile(header, entries, d[end..]);
     }
 
-    private void WriteManifest(string folder, byte number, Guid blobGuid) => WriteManifest(_fs, folder, number, blobGuid);
-
-    private static void WriteManifest(IWgsFileSystem fs, string folder, byte number, Guid blobGuid)
+    private static void WriteManifestFile(IWgsFileSystem fs, string folder, byte number, uint header,
+        List<WgsBlobEntry> entries, byte[] tail)
     {
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
-        w.Write(4u);
-        w.Write(1u);
-        var nameField = new byte[BlobNameFieldBytes];
-        Encoding.Unicode.GetBytes(BlobEntryName).CopyTo(nameField, 0);
-        w.Write(nameField);
-        w.Write(blobGuid.ToByteArray());
-        w.Write(blobGuid.ToByteArray()); // duplicated (current + baseline)
+        w.Write(header);
+        w.Write((uint)entries.Count);
+        foreach (var e in entries)
+        {
+            var nameField = new byte[BlobNameFieldBytes];
+            Encoding.Unicode.GetBytes(e.Name).CopyTo(nameField, 0);
+            w.Write(nameField);
+            w.Write(e.CloudId.ToByteArray());
+            w.Write(e.LocalId.ToByteArray());
+        }
+        w.Write(tail);
         WriteFileAtomic(fs, Path.Combine(folder, $"container.{number}"), ms.ToArray());
+    }
+
+    /// <summary>A blob name must fit the 128-byte (64 UTF-16 char) field with room to spare, be non-empty, and be unique.</summary>
+    private static void ValidateBlobSet(IReadOnlyDictionary<string, byte[]> blobs)
+    {
+        if (blobs.Count == 0) throw new ArgumentException("At least one blob is required.", nameof(blobs));
+        if (blobs.Count > MaxManifestBlobs) throw new ArgumentException($"At most {MaxManifestBlobs} blobs fit one container.", nameof(blobs));
+        var lower = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, data) in blobs)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length >= BlobNameFieldBytes / 2 || name.Contains('\0', StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Blob name '{name}' is not usable: it must be 1 to {BlobNameFieldBytes / 2 - 1} characters with no NUL.", nameof(blobs));
+            }
+            if (data is null) throw new ArgumentException($"Blob '{name}' has no data.", nameof(blobs));
+            if (!lower.Add(name)) throw new ArgumentException($"Blob names differ only by case: '{name}'.", nameof(blobs));
+        }
     }
 
     /// <summary>

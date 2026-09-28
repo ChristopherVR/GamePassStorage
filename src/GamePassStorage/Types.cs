@@ -43,6 +43,10 @@ public sealed class WgsContainer
 
     public bool HasInvalidState => RawState > (uint)WgsEntryState.Created;
 
+    /// <summary>A well-formed deletion tombstone: state Deleted and the ETag the cloud issued, kept so
+    /// the deletion can reach the cloud (see <see cref="WgsStore.DeleteContainer"/>).</summary>
+    public bool IsPendingDeletion => RawState == (uint)WgsEntryState.Deleted && !string.IsNullOrEmpty(Etag);
+
     /// <summary>Bit 2 of the state means "never uploaded", so it must be set iff the ETag is empty.</summary>
     public bool StateContradictsEtag => ((RawState & 4) != 0) != string.IsNullOrEmpty(Etag);
 
@@ -95,7 +99,7 @@ public enum WgsOperationStatus
     LockConflict,
     /// <summary>The store on disk no longer matches what was inspected; re-open and re-evaluate.</summary>
     ConcurrentChange,
-    /// <summary>A manifest or index shape this package does not model (for instance several blobs).</summary>
+    /// <summary>A manifest or index shape this package does not model (for instance a malformed or truncated manifest).</summary>
     UnsupportedLayout,
     /// <summary>The blob a manifest names is missing and no safe alternative exists.</summary>
     MissingBlob,
@@ -132,7 +136,9 @@ public sealed record WgsWritePlan(
     IReadOnlyList<string> FilesToRemove,
     WgsWriteAssessment Assessment);
 
-/// <summary>Everything worth knowing about a store's health, gathered without changing it.</summary>
+/// <summary>Everything worth knowing about a store's health, gathered without changing it.
+/// <see cref="MultiBlobContainers"/> is informational: containers whose valid manifest names several blobs,
+/// which are supported (see <see cref="WgsStore.TryReadBlobs"/>).</summary>
 public sealed record WgsDiagnosis(
     uint IndexVersion,
     bool IsKnownIndexVersion,
@@ -144,7 +150,12 @@ public sealed record WgsDiagnosis(
     IReadOnlyList<string> ContainersNeedingRepair,
     IReadOnlyList<string> MultiBlobContainers,
     IReadOnlyList<WgsOrphanedContainer> Orphans,
-    WgsWriteAssessment WriteAssessment);
+    WgsWriteAssessment WriteAssessment)
+{
+    /// <summary>Containers whose manifest is present but cannot be parsed (truncated, or a blob count
+    /// its length does not support). These are damage, not a layout to handle.</summary>
+    public IReadOnlyList<string> MalformedManifestContainers { get; init; } = [];
+}
 
 /// <summary>Thrown by throwing write paths when the write gate refuses.</summary>
 public sealed class WgsWriteRefusedException : InvalidOperationException

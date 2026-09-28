@@ -126,7 +126,7 @@ public interface IWgsWriteGate
 }
 
 /// <summary>Built-in write gates.</summary>
-public static class WgsWriteGates
+public static partial class WgsWriteGates
 {
     /// <summary>Refuses a store with an unresolved cloud conflict or a container in an unsafe state.</summary>
     public static IWgsWriteGate Structural { get; } = new StructuralGate();
