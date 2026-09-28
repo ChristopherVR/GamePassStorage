@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Game-agnostic Xbox Connected Storage ("wgs") container layer: containers.index, container.N
+    manifests and GUID blobs, ETag/state handling, snapshots, orphan discovery, write ordering
+    and atomic replacement. It has no package dependencies. Game-specific payload handling plugs
+    in through the adapter interfaces (IWgsBlobInspector, IWgsWriteGate); filesystem, clock and
+    logging are injectable.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+
+    <IsPackable>true</IsPackable>
+    <PackageId>GamePassStorage</PackageId>
+    <Title>Xbox Connected Storage (wgs) container layer</Title>
+    <Description>A game-agnostic reader/writer for Xbox Connected Storage (wgs) save folders used by Game Pass titles: containers.index, container manifests, blobs, ETag and sync-state handling, snapshots, orphan discovery and safe write ordering. Game-specific payload handling plugs in through adapter interfaces.</Description>
+    <PackageTags>xbox;game-pass;connected-storage;wgs;save-editor;game-tools</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>
