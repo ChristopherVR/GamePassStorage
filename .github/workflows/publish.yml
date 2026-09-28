@@ -3,7 +3,9 @@ name: Publish to NuGet
 # Publishes the GamePassStorage library, the game adapter packages (GamePassStorage.Adapters.*) and the
 # `wgs` tool (GamePassStorage.Tool) to nuget.org.
 # Trigger: push a version tag (git tag v0.1.0 && git push origin v0.1.0), or run it by hand.
-# Needs a repository secret NUGET_API_KEY (an nuget.org API key scoped to push these packages).
+# Authenticates with NuGet trusted publishing (OIDC): no stored API key. nuget.org must have a
+# trusted publishing policy for this repository and this workflow file (publish.yml). The nuget.org
+# account name comes from the NUGET_USER repository variable, falling back to the repo owner.
 
 on:
   push:
@@ -16,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write   # NuGet trusted publishing exchanges the GitHub OIDC token for a short-lived key
 
 jobs:
   publish:
@@ -49,14 +52,15 @@ jobs:
           dotnet pack src/GamePassStorage.Adapters.AbioticFactor -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
           dotnet pack src/GamePassStorage.Tool -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
 
+      - name: NuGet login (trusted publishing)
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER || github.repository_owner }}
+
       - name: Push to nuget.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::error::The NUGET_API_KEY repository secret is not set."; exit 1
-          fi
-          dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" \
+          dotnet nuget push "artifacts/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - uses: actions/upload-artifact@v4

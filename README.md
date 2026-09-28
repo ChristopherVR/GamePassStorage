@@ -176,7 +176,9 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow (`.github/workflows/publish.yml`) needs a repository secret named `NUGET_API_KEY`.
+The workflow (`.github/workflows/publish.yml`) uses NuGet trusted publishing (OIDC), so no API key is
+stored. nuget.org needs a trusted publishing policy for this repository and `publish.yml`; set the
+`NUGET_USER` repository variable if the nuget.org account name differs from the repository owner.
 It can also be run by hand from the Actions tab with a version number.
 
 ## License
