@@ -1,6 +1,7 @@
 name: Publish to NuGet
 
-# Publishes the GamePassStorage library and the `wgs` tool (GamePassStorage.Tool) to nuget.org.
+# Publishes the GamePassStorage library, the game adapter packages (GamePassStorage.Adapters.*) and the
+# `wgs` tool (GamePassStorage.Tool) to nuget.org.
 # Trigger: push a version tag (git tag v0.1.0 && git push origin v0.1.0), or run it by hand.
 # Needs a repository secret NUGET_API_KEY (an nuget.org API key scoped to push these packages).
 
@@ -45,6 +46,7 @@ jobs:
       - name: Pack
         run: |
           dotnet pack src/GamePassStorage -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
+          dotnet pack src/GamePassStorage.Adapters.AbioticFactor -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
           dotnet pack src/GamePassStorage.Tool -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
 
       - name: Push to nuget.org

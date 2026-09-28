@@ -21,6 +21,11 @@
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\GamePassStorage\GamePassStorage.csproj" />
     <ProjectReference Include="..\..\src\GamePassStorage.Tool\GamePassStorage.Tool.csproj" />
+    <ProjectReference Include="..\..\src\GamePassStorage.Adapters.AbioticFactor\GamePassStorage.Adapters.AbioticFactor.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\fixtures\**\*" Link="fixtures\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
