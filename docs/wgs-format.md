@@ -1,3 +1,8 @@
+---
+title: Format reference
+outline: [2, 3]
+---
+
 # Xbox Connected Storage (wgs) format
 
 This is the on-disk layout that Game Pass (Microsoft Store / Xbox app) PC titles use for their

@@ -4,3 +4,8 @@
 *.user
 *.suo
 /artifacts/
+
+# Documentation site (VitePress)
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
