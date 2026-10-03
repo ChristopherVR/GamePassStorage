@@ -69,6 +69,10 @@ short version (the [adapter guide](/guide/adapters#adding-a-new-adapter) has the
 
 The site is VitePress, in `docs/`:
 
+Use Node.js 24 or later. The stable VitePress release is kept with overrides for patched Vite 7
+and the current Vue plugin; Vite 8 uses Rolldown and is not compatible with this VitePress release.
+CI checks `npm audit --audit-level=moderate` and builds the docs on every pull request.
+
 ```console
 cd docs
 npm ci

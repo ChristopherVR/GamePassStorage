@@ -534,7 +534,7 @@ public class WgsExtensionsTests
         store.WriteBlob(store.Find("A")!, Bytes(99, 7));
         var before = fs.Snapshot().Where(f => f.Key.StartsWith(Root + "/", StringComparison.Ordinal)).ToDictionary(f => f.Key, f => f.Value);
         fs.Fault = (op, path) => op == "MoveOverwrite" && path.StartsWith(Root, StringComparison.Ordinal)
-            && path.EndsWith("container.1", StringComparison.Ordinal) ? new IOException("disk full") : null;
+            && Path.GetFileName(path).StartsWith("container.", StringComparison.Ordinal) ? new IOException("disk full") : null;
 
         var result = WgsStore.TryRestore(Root, "/backup", "/safety", options);
         fs.Fault = null;

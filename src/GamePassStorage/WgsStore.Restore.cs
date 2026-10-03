@@ -128,7 +128,9 @@ public sealed partial class WgsStore
                 + "Move it aside by hand first.");
         }
         var current = opened.Store!;
-        var backupOpened = TryOpen(backupFolder, opts).Store!;
+        var backupResult = TryOpen(backupFolder, opts);
+        if (!backupResult.Succeeded) return Refuse($"The backup changed or could not be reopened: {backupResult.Message}");
+        var backupOpened = backupResult.Store!;
         if (current.PackageFamilyName.Length > 0 && backupOpened.PackageFamilyName.Length > 0
             && !string.Equals(current.PackageFamilyName, backupOpened.PackageFamilyName, StringComparison.OrdinalIgnoreCase))
         {
@@ -154,6 +156,7 @@ public sealed partial class WgsStore
         }
 
         var created = new List<string>();
+        var committed = false;
         try
         {
             var restored = new WgsStore(storeFolder, opts);
@@ -163,25 +166,45 @@ public sealed partial class WgsStore
             {
                 var from = Path.Combine(backupFolder, c.FolderName);
                 var to = Path.Combine(storeFolder, c.FolderName);
-                if (!fs.DirectoryExists(from)) continue;   // a tombstone with no files
+                if (!fs.DirectoryExists(from))
+                {
+                    if (c.RawState == (uint)WgsEntryState.Deleted) continue;
+                    throw new IOException($"The backup container '{c.Name}' disappeared while restoring.");
+                }
                 fs.CreateDirectory(to);
                 var manifestName = $"container.{c.ContainerNumber}";
                 var manifestSource = Path.Combine(from, manifestName);
-                if (!fs.FileExists(manifestSource)) continue;
-                var manifest = backupOpened.ReadManifestFile(from, c.ContainerNumber);
-                var blobNames = manifest.Entries.SelectMany(e => new[] { BlobFileName(e.LocalId), BlobFileName(e.CloudId) })
-                    .Distinct(StringComparer.OrdinalIgnoreCase);
-                foreach (var blob in blobNames)
+                if (!fs.FileExists(manifestSource))
                 {
-                    var source = Path.Combine(from, blob);
-                    if (!fs.FileExists(source)) continue;
-                    var target = Path.Combine(to, blob);
-                    if (!fs.FileExists(target)) created.Add(target);
+                    if (c.RawState == (uint)WgsEntryState.Deleted) continue;
+                    throw new IOException($"The backup manifest for '{c.Name}' disappeared while restoring.");
+                }
+                var manifest = backupOpened.ReadManifestFile(from, c.ContainerNumber);
+                // Stage under fresh blob ids and an unused manifest number. Never overwrite any
+                // existing generation before the new index commits, even when backup ids collide.
+                var number = FindRestoreManifestNumber(fs, to, c.ContainerNumber, current);
+                var ids = new Dictionary<Guid, Guid>();
+                foreach (var id in manifest.Entries.SelectMany(e => new[] { e.LocalId, e.CloudId }).Distinct())
+                {
+                    var source = Path.Combine(from, BlobFileName(id));
+                    if (!fs.FileExists(source))
+                    {
+                        if (manifest.Entries.Any(e => e.LocalId == id))
+                            throw new IOException($"A current backup blob for '{c.Name}' disappeared while restoring.");
+                        continue;
+                    }
+                    Guid fresh;
+                    do { fresh = Guid.NewGuid(); } while (fs.FileExists(Path.Combine(to, BlobFileName(fresh))));
+                    ids.Add(id, fresh);
+                    var target = Path.Combine(to, BlobFileName(fresh));
+                    created.Add(target);
                     WriteFileAtomic(fs, target, fs.ReadAllBytes(source));
                 }
-                var manifestTarget = Path.Combine(to, manifestName);
-                if (!fs.FileExists(manifestTarget)) created.Add(manifestTarget);
-                WriteFileAtomic(fs, manifestTarget, fs.ReadAllBytes(manifestSource));
+                var entries = manifest.Entries.Select(e => new WgsBlobEntry(e.Name,
+                    ids.GetValueOrDefault(e.CloudId, e.CloudId), ids[e.LocalId])).ToList();
+                created.Add(Path.Combine(to, $"container.{number}"));
+                WriteManifestFile(fs, to, number, manifest.Header, entries, manifest.Tail);
+                c.ContainerNumber = number;
             }
 
             foreach (var c in restored._containers.Where(c => c.RawState == (uint)WgsEntryState.Synced))
@@ -192,17 +215,31 @@ public sealed partial class WgsStore
             // WriteIndex advances the stamp strictly beyond whatever the header holds; seed it with the newer of the two.
             var newest = Math.Max(current.IndexFileTime, restored.IndexFileTime);
             BitConverter.GetBytes(newest).CopyTo(restored._header, restored._indexFileTimeOffset);
+            change = current.DetectExternalChange();
+            var backupChange = backupOpened.DetectExternalChange();
+            if (backupChange.Changed) change = backupChange;
+            if (change.Changed)
+            {
+                current.RemoveBestEffort(created);
+                return new WgsRestoreResult(WgsOperationStatus.ConcurrentChange, null,
+                    string.Join(" ", change.Reasons), safetyCopyFolder, []);
+            }
             restored.WriteIndex();
+            committed = true;
 
+            // After the index commits, cleanup failures must never remove the committed files.
+            created.Clear();
             restored.PruneUnreferenced(storeFolder);
             opts.Log.Info($"wgs: restored {storeFolder} from {backupFolder}; previous store kept at {safetyCopyFolder}.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException
             or ArgumentException)
         {
-            current.RemoveBestEffort(created);
+            if (!committed) current.RemoveBestEffort(created);
             return new WgsRestoreResult(IsLockConflict(ex) ? WgsOperationStatus.LockConflict : WgsOperationStatus.Failed, null,
-                $"The restore was interrupted ({ex.Message}). The index was not replaced; the previous store is also kept at {safetyCopyFolder}.",
+                committed
+                    ? $"The restored index committed, but cleanup failed ({ex.Message}). The previous store is kept at {safetyCopyFolder}."
+                    : $"The restore was interrupted ({ex.Message}). The index was not replaced; the previous store is also kept at {safetyCopyFolder}.",
                 safetyCopyFolder, []);
         }
 
@@ -210,6 +247,18 @@ public sealed partial class WgsStore
         return new WgsRestoreResult(reopened.Succeeded ? WgsOperationStatus.Ok : WgsOperationStatus.Failed,
             reopened.Store, reopened.Message, safetyCopyFolder, []);
 
+    }
+
+    private static byte FindRestoreManifestNumber(IWgsFileSystem fs, string folder, byte previous, WgsStore current)
+    {
+        for (var offset = 1; offset <= 256; offset++)
+        {
+            var number = unchecked((byte)(previous + offset));
+            if (!fs.FileExists(Path.Combine(folder, $"container.{number}"))
+                && !current._containers.Any(c => Path.Combine(current._root, c.FolderName) == folder && c.ContainerNumber == number))
+                return number;
+        }
+        throw new IOException($"'{folder}' has no unused manifest generation; the restore cannot be staged safely.");
     }
 
     private static bool SameOrInside(string parent, string candidate)

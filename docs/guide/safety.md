@@ -66,6 +66,16 @@ verdict, and `store.EnsureWritable()` to throw `WgsWriteRefusedException` when i
 
 ## Backups
 
+Restore stages fresh blob ids and an unused manifest generation before committing the replacement
+index. Existing files stay intact if staging or the index write fails. A store with all 256 manifest
+generations occupied is refused safely; the safety copy remains available. After a successful
+index commit, superseded files are pruned.
+
+Import accepts version 1 export manifests for the same package family, checks blob names, sizes
+and SHA-256 hashes, and reads all source bytes before the first write. The verified bytes are used
+directly, so changing the import folder afterward cannot substitute unverified content. Imports
+still commit one container at a time; an I/O failure reports the containers already applied.
+
 The library keeps only one generation per container (it prunes the superseded manifest and blob),
 so **the backup is your rollback**. Call `store.CopyStoreTo(destination)` before every write. The
 `wgs put`, `delete`, `restore` and `import` commands refuse to run without `--backup` (or `--dry-run`).

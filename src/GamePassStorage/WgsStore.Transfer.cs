@@ -127,22 +127,35 @@ public sealed partial class WgsStore
     }
 
     private sealed record ImportSource(string ContainerName, List<(string BlobName, string Path, long? Size, string? Sha256)> Blobs);
+    private sealed record PreparedImport(WgsImportPlan Plan, List<(string Name, Dictionary<string, byte[]> Blobs)> Containers);
 
     /// <summary>Previews <see cref="TryImport"/>: what would be added or replaced, and every problem that would stop it. Writes nothing.</summary>
-    public WgsImportPlan PlanImport(string folder)
+    public WgsImportPlan PlanImport(string folder) => PrepareImport(folder).Plan;
+
+    private PreparedImport PrepareImport(string folder)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         var problems = new List<string>();
         var items = new List<WgsImportItem>();
-        foreach (var source in DiscoverImport(folder, problems))
+        var containers = new List<(string Name, Dictionary<string, byte[]> Blobs)>();
+        List<ImportSource> sources;
+        try { sources = DiscoverImport(folder, problems); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            problems.Add($"The import folder could not be read: {ex.Message}");
+            sources = [];
+        }
+        foreach (var source in sources)
         {
             long total = 0;
             var ok = true;
+            var blobs = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             foreach (var b in source.Blobs)
             {
                 var data = ReadVerified(source.ContainerName, b, problems);
                 if (data is null) { ok = false; continue; }
                 total += data.Length;
+                blobs.Add(b.BlobName, data);
             }
             var existing = Find(source.ContainerName);
             if (existing is not null && existing.RawState == (uint)WgsEntryState.Deleted)
@@ -150,10 +163,16 @@ public sealed partial class WgsStore
                 problems.Add($"'{source.ContainerName}' is deleted and waiting for the cloud to learn of it; it cannot be imported over.");
                 ok = false;
             }
-            if (ok) items.Add(new WgsImportItem(source.ContainerName, existing is null, source.Blobs.Select(b => b.BlobName).ToList(), total));
+            if (ok)
+            {
+                try { ValidateBlobSet(blobs); }
+                catch (ArgumentException ex) { problems.Add($"'{source.ContainerName}': {ex.Message}"); continue; }
+                items.Add(new WgsImportItem(source.ContainerName, existing is null, source.Blobs.Select(b => b.BlobName).ToList(), total));
+                containers.Add((source.ContainerName, blobs));
+            }
         }
         if (items.Count == 0 && problems.Count == 0) problems.Add($"'{folder}' holds nothing to import.");
-        return new WgsImportPlan(items, problems, AssessWrite());
+        return new PreparedImport(new WgsImportPlan(items, problems, AssessWrite()), containers);
     }
 
     /// <summary>
@@ -162,7 +181,8 @@ public sealed partial class WgsStore
     /// </summary>
     public WgsImportResult TryImport(string folder)
     {
-        var plan = PlanImport(folder);
+        var prepared = PrepareImport(folder);
+        var plan = prepared.Plan;
         if (plan.Problems.Count > 0)
         {
             return new WgsImportResult(WgsOperationStatus.Failed, [], "Nothing was imported: " + string.Join(" ", plan.Problems));
@@ -171,26 +191,18 @@ public sealed partial class WgsStore
         {
             return new WgsImportResult(WgsOperationStatus.Refused, [], plan.Assessment.BlockingMessage());
         }
-        var problems = new List<string>();
         var applied = new List<string>();
-        foreach (var source in DiscoverImport(folder, problems))
+        foreach (var (name, changes) in prepared.Containers)
         {
-            var changes = new Dictionary<string, byte[]>(StringComparer.Ordinal);
-            foreach (var b in source.Blobs) changes[b.BlobName] = ReadVerified(source.ContainerName, b, problems) ?? [];
-            if (problems.Count > 0)
-            {
-                return new WgsImportResult(WgsOperationStatus.Failed, applied,
-                    "The import folder changed while it was being read: " + string.Join(" ", problems));
-            }
-            var result = Find(source.ContainerName) is { } existing
+            var result = Find(name) is { } existing
                 ? TryWriteBlobs(existing, changes)
-                : TryCreateContainer(source.ContainerName, changes);
+                : TryCreateContainer(name, changes);
             if (!result.Succeeded)
             {
                 return new WgsImportResult(result.Status, applied,
-                    $"'{source.ContainerName}' was not imported ({result.Status}): {result.Message}");
+                    $"'{name}' was not imported ({result.Status}): {result.Message}");
             }
-            applied.Add(source.ContainerName);
+            applied.Add(name);
         }
         return new WgsImportResult(WgsOperationStatus.Ok, applied, null);
     }
@@ -211,23 +223,48 @@ public sealed partial class WgsStore
                 problems.Add($"{ExportManifestFileName} is not valid: {ex.Message}");
                 return sources;
             }
-            if (manifest is null || manifest.Format != "wgs-export" || manifest.Containers is null)
+            if (manifest is null || manifest.Format != "wgs-export" || manifest.Containers is null || manifest.PackageFamilyName is null)
             {
                 problems.Add($"{ExportManifestFileName} is not a wgs export manifest.");
+                return sources;
+            }
+            if (manifest.Version != 1)
+            {
+                problems.Add($"Export manifest version {manifest.Version} is not supported.");
+                return sources;
+            }
+            if (PackageFamilyName.Length > 0 && manifest.PackageFamilyName.Length > 0
+                && !string.Equals(WgsGameAdapterRegistry.FamilyOf(PackageFamilyName),
+                    WgsGameAdapterRegistry.FamilyOf(manifest.PackageFamilyName), StringComparison.OrdinalIgnoreCase))
+            {
+                problems.Add($"The export belongs to '{manifest.PackageFamilyName}', the store to '{PackageFamilyName}'.");
                 return sources;
             }
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var c in manifest.Containers)
             {
-                if (string.IsNullOrWhiteSpace(c.Name) || c.Blobs is null || c.Blobs.Count == 0)
+                if (c is null || string.IsNullOrWhiteSpace(c.Name) || c.Name.Contains('\0', StringComparison.Ordinal)
+                    || c.Blobs is null || c.Blobs.Count == 0 || c.Blobs.Count > MaxManifestBlobs)
                 {
                     problems.Add("The manifest lists a container with no name or no blobs.");
                     continue;
                 }
                 if (!seen.Add(c.Name)) { problems.Add($"The manifest lists '{c.Name}' twice."); continue; }
                 var src = new ImportSource(c.Name, []);
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var b in c.Blobs)
                 {
+                    if (b is null || string.IsNullOrEmpty(b.Name) || b.Name.Length >= BlobNameFieldBytes / 2
+                        || b.Name.Contains('\0', StringComparison.Ordinal) || !names.Add(b.Name))
+                    {
+                        problems.Add($"'{c.Name}' lists a null, invalid or duplicate blob name.");
+                        continue;
+                    }
+                    if (b.Size < 0 || b.Sha256 is null || b.Sha256.Length != 64 || !IsHex(b.Sha256))
+                    {
+                        problems.Add($"'{c.Name}/{b.Name}' has an invalid size or SHA-256.");
+                        continue;
+                    }
                     var full = SafeRelativePath(folder, b.File);
                     if (full is null)
                     {
