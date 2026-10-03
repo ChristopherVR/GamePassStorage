@@ -1,7 +1,7 @@
 # Releasing
 
-Pushing a version tag publishes both packages, `GamePassStorage` and `GamePassStorage.Tool`, to
-nuget.org and creates a GitHub release.
+Pushing a version tag publishes `GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor` and
+`GamePassStorage.Tool` to nuget.org and creates a GitHub release after tests pass on Windows and Linux.
 
 ```console
 git tag v0.1.0
@@ -14,11 +14,12 @@ The workflow is `.github/workflows/publish.yml` and triggers on tags matching `v
 
 1. Resolves the version from the tag (`v0.1.0` becomes `0.1.0`) and checks that it is a semantic
    version.
-2. Runs the tests in Release configuration.
+2. Runs the tests in Release configuration on Windows and Linux; both must pass before publishing.
 3. Packs the library, the adapter packages and the tool with that version.
-4. Signs in to nuget.org with trusted publishing (OIDC) and pushes `artifacts/*.nupkg` with `--skip-duplicate`.
-5. Uploads the packages as a workflow artifact.
-6. For tag pushes, creates a GitHub release with generated notes and the packages attached.
+4. Uploads the packages as a workflow artifact, preserving them even if NuGet authentication fails.
+5. Signs in to nuget.org with trusted publishing (OIDC) and pushes `artifacts/*.nupkg` with `--skip-duplicate`.
+6. For tag pushes, creates a GitHub release with generated notes and the packages attached. Rerunning
+   a release skips packages already published and updates attachments on an existing GitHub release.
 
 ## Requirements
 

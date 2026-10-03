@@ -55,7 +55,8 @@ short version (the [adapter guide](/guide/adapters#adding-a-new-adapter) has the
 3. **Built-in set.** To ship it inside `wgs`, add a `ProjectReference` in
    `src/GamePassStorage.Tool/GamePassStorage.Tool.csproj` and list it in `BuiltInAdapters.cs`. An
    adapter that is not accepted as a built-in still works as a plugin (`--adapters`).
-4. **Pipelines.** Add a `dotnet pack` line for it to `.github/workflows/ci.yml` and `publish.yml`.
+4. **Pipelines.** CI and publishing pack `GamePassStorage.slnx`, so a packable adapter added to
+   the solution is included automatically. Publishing requires passing tests on Windows and Linux.
 5. **Tests.** Matching, classification, every parser on real or synthetic payloads (including
    truncated input), inspector, gate with an injected process lister, resolution against other
    adapters, loading the built DLL as a plugin, and `wgs inspect` output.

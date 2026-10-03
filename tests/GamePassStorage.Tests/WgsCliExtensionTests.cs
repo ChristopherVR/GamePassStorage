@@ -142,7 +142,7 @@ public sealed class WgsCliExtensionTests : IDisposable
     [Fact]
     public void Find_lists_stores_under_the_given_roots_and_says_so_when_there_are_none()
     {
-        var store = P("lad/Packages/Test.Game_abc/SystemAppData/wgs/2535_scid");
+        var store = Path.GetFullPath(P("lad/Packages/Test.Game_abc/SystemAppData/wgs/2535_scid"));
         WgsStore.WriteNewContainer(store, "Slot1", [1], "Test.Game_abc!App");
 
         var found = Run("find", "--local-app-data", P("lad"));

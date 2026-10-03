@@ -169,7 +169,9 @@ dotnet test  GamePassStorage.slnx
 
 ## Releasing
 
-Pushing a version tag publishes both packages to nuget.org and creates a GitHub release:
+Pushing a version tag tests on Windows and Linux, publishes all three packages to nuget.org
+(`GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor` and `GamePassStorage.Tool`), and creates
+a GitHub release:
 
 ```console
 git tag v0.1.0

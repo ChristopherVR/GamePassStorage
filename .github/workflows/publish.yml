@@ -17,12 +17,32 @@ on:
         required: true
 
 permissions:
-  contents: write
-  id-token: write   # NuGet trusted publishing exchanges the GitHub OIDC token for a short-lived key
+  contents: read
+
+concurrency:
+  group: nuget-publish
+  cancel-in-progress: false
 
 jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet test GamePassStorage.slnx -c Release
+
   publish:
+    needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write   # NuGet trusted publishing exchanges the GitHub OIDC token for a short-lived key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -32,9 +52,11 @@ jobs:
       - name: Resolve version
         id: version
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            v="${{ inputs.version }}"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            v="$RELEASE_VERSION"
           else
             v="${GITHUB_REF_NAME#v}"
           fi
@@ -43,14 +65,14 @@ jobs:
           fi
           echo "value=$v" >> "$GITHUB_OUTPUT"
 
-      - name: Test
-        run: dotnet test GamePassStorage.slnx -c Release
-
       - name: Pack
-        run: |
-          dotnet pack src/GamePassStorage -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
-          dotnet pack src/GamePassStorage.Adapters.AbioticFactor -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
-          dotnet pack src/GamePassStorage.Tool -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
+        run: dotnet pack GamePassStorage.slnx -c Release -o artifacts -p:Version=${{ steps.version.outputs.value }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg-${{ steps.version.outputs.value }}
+          path: artifacts/*.nupkg
+          if-no-files-found: error
 
       - name: NuGet login (trusted publishing)
         id: nuget-login
@@ -59,17 +81,19 @@ jobs:
           user: ${{ vars.NUGET_USER || github.repository_owner }}
 
       - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
-          dotnet nuget push "artifacts/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
+          dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json --skip-duplicate
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: nupkg-${{ steps.version.outputs.value }}
-          path: artifacts/*.nupkg
 
       - name: GitHub release
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artifacts/*.nupkg --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+          fi

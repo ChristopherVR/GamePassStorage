@@ -105,7 +105,7 @@ public static class WgsAdapterLoader
         var errors = new List<string>();
         try
         {
-            var assembly = new AdapterLoadContext(full, contract).LoadFromAssemblyPath(full);
+            var assembly = new AdapterLoadContext(full, contract).LoadManagedAssembly(full);
             Type[] types;
             try
             {
@@ -146,6 +146,14 @@ public static class WgsAdapterLoader
     {
         private readonly AssemblyDependencyResolver _resolver = new(mainPath);
 
+        // Loading from a stream keeps Windows from locking plugin DLLs for the lifetime of the host.
+        // The resolver still uses the original path to find the plugin's private dependencies.
+        public Assembly LoadManagedAssembly(string path)
+        {
+            using var stream = File.OpenRead(path);
+            return LoadFromStream(stream);
+        }
+
         protected override Assembly? Load(AssemblyName assemblyName)
         {
             // The contract is shared with the host; everything else the adapter brings stays private to it.
@@ -154,7 +162,7 @@ public static class WgsAdapterLoader
                 return contract;
             }
             var path = _resolver.ResolveAssemblyToPath(assemblyName);
-            return path is null ? null : LoadFromAssemblyPath(path);
+            return path is null ? null : LoadManagedAssembly(path);
         }
     }
 }

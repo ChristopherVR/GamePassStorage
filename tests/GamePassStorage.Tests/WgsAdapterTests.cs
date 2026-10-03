@@ -216,6 +216,11 @@ public sealed class WgsAdapterTests : IDisposable
         var d = adapter.Describe(new WgsContainer { Name = "TestWorld-WC" }, AbioticAdapterTests.FixtureBlob());
         Assert.Equal("world bundle", d.Kind);
         Assert.Equal(3, d.Members.Count);
+
+        // Loaded managed plugins must not hold their source files open, including on Windows.
+        Directory.Delete(plugins, recursive: true);
+        Assert.True(adapter.Matches(AbioticAdapterTests.FullFamily));
+        Assert.Equal(3, adapter.Describe(new WgsContainer { Name = "TestWorld-WC" }, AbioticAdapterTests.FixtureBlob()).Members.Count);
     }
 
     [Fact]
