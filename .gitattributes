@@ -1,0 +1,4 @@
+# Save fixtures are byte-exact, even when a payload happens to look like plain text.
+tests/fixtures/** -text
+tests/fixtures/*.md text eol=lf
+tests/fixtures/*.py text eol=lf
