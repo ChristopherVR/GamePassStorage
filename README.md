@@ -179,7 +179,8 @@ git push origin v0.1.0
 ```
 
 The workflow (`.github/workflows/publish.yml`) uses NuGet trusted publishing (OIDC), so no API key is
-stored. nuget.org needs a trusted publishing policy for this repository and `publish.yml`; set the
+stored. nuget.org needs a trusted publishing policy for this repository, `publish.yml` and the
+`production` environment; set the
 `NUGET_USER` repository variable if the nuget.org account name differs from the repository owner.
 It can also be run by hand from the Actions tab with a version number.
 

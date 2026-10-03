@@ -25,7 +25,7 @@ The workflow is `.github/workflows/publish.yml` and triggers on tags matching `v
 
 | Requirement | Detail |
 | --- | --- |
-| Trusted publishing policy | On nuget.org, add a trusted publishing policy for repository `ChristopherVR/GamePassStorage` and workflow file `publish.yml`. No API key is stored in GitHub: the workflow exchanges its short-lived GitHub OIDC token for a temporary nuget.org key (`NuGet/login`). |
+| Trusted publishing policy | On nuget.org, add a trusted publishing policy for repository `ChristopherVR/GamePassStorage`, workflow file `publish.yml`, and environment `production`. No API key is stored in GitHub: the workflow exchanges its short-lived GitHub OIDC token for a temporary nuget.org key (`NuGet/login`). |
 | `NUGET_USER` (optional) | A repository variable with the nuget.org account name that owns the policy. Defaults to the repository owner. |
 | A semantic version | `MAJOR.MINOR.PATCH`, optionally with a pre-release suffix such as `-beta.1`. |
 
