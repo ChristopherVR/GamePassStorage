@@ -89,8 +89,8 @@ Layout notes:
 Reported **not** to move file for file (per the same project): A Plague Tale: Requiem, ARK: Survival
 Ascended, Chivalry 2, Death's Door, Forza Horizon 4, the Like a Dragon / Yakuza: Like a Dragon titles,
 Neon White, Persona 3 Reload and Tinykin. Newer GDK titles keep file-oriented saves under
-`XboxGames\GameSave\pgs`, a different layer from wgs that this library does not read yet
-([XgpSaveTools](https://github.com/brodrigz/XgpSaveTools) treats it as a separate source).
+`XboxGames\GameSave\pgs`, a different layer from wgs. `wgs pgs` reads it (find, list, extract,
+back up; no writes); the only game id known so far is Forza Horizon 6's (`16D460`).
 
 A title not in the catalog still unwraps with `container-folders` (lossless for any store) or a layout
 named with `--layout`. To promote a catalog title to a full adapter (payload knowledge, a process gate),

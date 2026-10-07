@@ -97,6 +97,14 @@ public static class GameCatalog
         "Tinykin", "Yakuza: Like a Dragon",
     ];
 
+    /// <summary>Titles whose saves live in the newer PGS layout (<c>XboxGames\GameSave\pgs</c>), by PGS game id. The id is
+    /// not derivable from the package, so it is listed per title. From brodrigz/XgpSaveTools (<c>games.json</c>, MIT).</summary>
+    public static IReadOnlyDictionary<string, (string Title, string PackageFamily)> PgsTitles { get; } =
+        new Dictionary<string, (string, string)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["16D460"] = ("Forza Horizon 6", "Microsoft.ForteBaseGame_8wekyb3d8bbwe"),
+        };
+
     /// <summary>One adapter per entry, ready to register.</summary>
     public static IReadOnlyList<IWgsGameAdapter> CreateAdapters() => Entries.Select(e => (IWgsGameAdapter)new CatalogGameAdapter(e)).ToList();
 

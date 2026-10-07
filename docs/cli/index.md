@@ -382,3 +382,28 @@ is zeroed in place. Every other file in a container folder (current, previous an
 replaced with zero bytes of the same length. Files outside container folders are left out and listed.
 The output keeps the package family name, container and blob names, sizes, states and ETags. Choose
 a neutral output folder name: the store's own folder name is your account id (XUID). Reads the store only.
+
+## wgs pgs
+
+```console
+wgs pgs find    [--game <id>] [--pgs <folder>] [--json]
+wgs pgs list    <user-root> [--snapshot <n>] [--json]
+wgs pgs extract <user-root> <out-folder> [--snapshot <n>]
+wgs pgs backup  <user-root> <destination>
+```
+
+Newer GDK titles keep saves in a second, file-oriented layout under `<drive>:\XboxGames\GameSave\pgs`
+(see the [format reference](/wgs-format#pgs-the-file-oriented-layout)). These commands only read it.
+
+- `find` lists every `u_<xuid>_<gameId>` save root on each fixed drive (or under `--pgs`), with its
+  snapshots and the one `current` points to. Known game ids are named (today Forza Horizon 6, `16D460`).
+- `list` shows a snapshot's save files: the one `current` points to, or `--snapshot <n>`. With no
+  usable `current` it refuses rather than guess, and names the snapshots to choose from.
+- `extract` copies a snapshot's save files, untouched and with their real names. They are already
+  the game's own files, so this is the native save. If anything changes during the copy (the game or
+  a sync is writing) the copy is removed and the command fails: close the game, let it sync, retry.
+- `backup` copies the whole save root, every snapshot and the metadata files, with the same check.
+  The metadata holds Xbox user and device data: keep the copy private.
+
+There is no write command. Nothing public says how the metadata, snapshots and cloud sync must
+agree, and a wrong guess can lose a save; the same choice is made by XgpSaveTools.

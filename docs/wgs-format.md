@@ -241,3 +241,32 @@ Still unverified from here:
 - Whether any state value above 5 has a meaning at all. The library treats them as damage
   (`WgsContainer.HasInvalidState`), on the evidence that only older third-party tools are known to
   have produced them.
+
+## PGS: the file-oriented layout
+
+Newer GDK titles can keep saves in a second layout, beside wgs rather than replacing it:
+
+```
+<drive>:\XboxGames\GameSave\pgs\
+  u_<xuid>_<gameId>\                one user and title; xuid decimal, game id hex
+    current                         a reparse point (symlink or junction) to the active snapshot
+    <N>\ContainersRoot\<path>\<file> numeric snapshot folders; the save files, with their real names
+    <N>.json                        Gaming Services metadata, schema undocumented
+```
+
+- There is no binary index. Containers are folders and blobs are files, as in Microsoft's
+  XGameSaveFiles model, so reading is a directory walk.
+- The game id is not derived from the package family; it is known per title (Forza Horizon 6 is
+  `16D460`, package `Microsoft.ForteBaseGame_8wekyb3d8bbwe`).
+- `current` must resolve to a numeric folder directly inside the same user root; anything else is
+  not trusted, and the reader then asks for a snapshot by number instead of guessing.
+- Links inside `ContainersRoot` are not followed, and paths may not leave it.
+
+**Still unverified:** what the metadata JSON holds (it may list files, versions, hashes and sync
+state), what the snapshot number means and whether old snapshots are kept for rollback, and how
+the folders under `ContainersRoot` are named (the example `User_<profileID>` comes from the game).
+No real PGS store has been examined here. Writing is not supported until those are known.
+
+Sources: [brodrigz/XgpSaveTools](https://github.com/brodrigz/XgpSaveTools) (`PgsGameSaveSource.cs`,
+`PgsGameSaveHandler.cs`, `games.json`; MIT), which also keeps PGS read-only "until the source can
+perform a safe cloud-aware transaction", and Microsoft's XGameSaveFiles documentation.

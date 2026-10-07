@@ -51,6 +51,10 @@ public static class WgsCli
           wgs unwrap    <store> <out-folder> [--layout <spec>]       # the game's plain save files, no Xbox wrapper
           wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
           wgs sanitize  <store> <out-folder>                   # shareable copy: structure kept, blobs zero-filled
+          wgs pgs find  [--game <id>] [--pgs <folder>] [--json] # newer GDK saves under XboxGames\GameSave\pgs (read-only)
+          wgs pgs list    <user-root> [--snapshot <n>] [--json]
+          wgs pgs extract <user-root> <out-folder> [--snapshot <n>]   # the save files, untouched
+          wgs pgs backup  <user-root> <destination>                   # everything, metadata included (private)
           (layouts: container-folders[:<suffix>], one-file[:<suffix>], blobs[:<container>]; default: the game's own, else container-folders)
                                                              Add or replace containers from an export folder.
 
@@ -103,6 +107,7 @@ public static class WgsCli
                 "unwrap" => Unwrap(rest, stdout, stderr, ctx),
                 "wrap" => Wrap(rest, stdout, stderr, ctx),
                 "sanitize" => Sanitize(rest, stdout, stderr, ctx),
+                "pgs" => Pgs(rest, stdout, stderr),
                 _ => UsageError(stderr, $"Unknown command '{command}'."),
             };
         }
@@ -578,6 +583,76 @@ public static class WgsCli
         stdout.WriteLine($"restored {result.Store!.Containers.Count} container(s) from {backupFolder}; previous store at {result.SafetyCopyPath}");
         return Ok;
     }
+
+    // PGS saves are read-only here: nothing public says how their metadata, snapshots and sync must agree.
+    private static int Pgs(Arguments a, TextWriter stdout, TextWriter stderr)
+    {
+        var sub = a.Positional(0, "find|list|extract|backup");
+        switch (sub)
+        {
+            case "find":
+            {
+                var json = a.Flag("--json");
+                var game = a.Option("--game");
+                var folder = a.Option("--pgs");
+                a.EnsureConsumed();
+                var found = PgsSaves.Find(folder is null ? null : [folder], game);
+                if (json)
+                {
+                    stdout.WriteLine(JsonSerializer.Serialize(found.Select(r => new { r.Path, r.Xuid, r.GameId, Title = PgsTitle(r.GameId), r.CurrentSnapshot, r.Snapshots, r.Problem }), Json));
+                    return Ok;
+                }
+                if (found.Count == 0) { stdout.WriteLine("no pgs saves found"); return Ok; }
+                foreach (var r in found)
+                {
+                    stdout.WriteLine($"game {r.GameId}{(PgsTitle(r.GameId) is { } t ? $" ({t})" : "")}  xuid {r.Xuid}  snapshots {r.Snapshots.Count}  current {r.CurrentSnapshot ?? $"none: {r.Problem}"}");
+                    stdout.WriteLine($"  {r.Path}");
+                }
+                return Ok;
+            }
+            case "list":
+            {
+                var json = a.Flag("--json");
+                var snapshot = a.Option("--snapshot");
+                var root = OpenPgs(a.Positional(1, "user-root"), stderr);
+                a.EnsureConsumed();
+                if (root is null) return Failure;
+                var result = PgsSaves.List(root, snapshot);
+                if (!result.Succeeded) { stderr.WriteLine($"error: {result.Status}: {result.Message}"); return Failure; }
+                if (json) { stdout.WriteLine(JsonSerializer.Serialize(result, Json)); return Ok; }
+                stdout.WriteLine($"snapshot {result.Snapshot}: {result.Files.Count} file(s), {result.Files.Sum(f => f.Size):N0} bytes");
+                foreach (var f in result.Files) stdout.WriteLine($"  {f.RelativePath}  {f.Size:N0} bytes  {f.LastWriteUtc:yyyy-MM-dd HH:mm:ss}Z");
+                return Ok;
+            }
+            case "extract":
+            case "backup":
+            {
+                var snapshot = sub == "extract" ? a.Option("--snapshot") : null;
+                var root = OpenPgs(a.Positional(1, "user-root"), stderr);
+                var destination = a.Positional(2, sub == "extract" ? "out-folder" : "destination");
+                a.EnsureConsumed();
+                if (root is null) return Failure;
+                var result = sub == "extract" ? PgsSaves.Extract(root, destination, snapshot) : PgsSaves.Backup(root, destination);
+                if (!result.Succeeded) { stderr.WriteLine($"error: {result.Status}: {result.Message}"); return Failure; }
+                stdout.WriteLine($"copied {result.Files.Count} file(s), {result.Files.Sum(f => f.Size):N0} bytes to {destination}" +
+                    (result.Snapshot is null ? "" : $" (snapshot {result.Snapshot})"));
+                if (sub == "backup") stdout.WriteLine("the metadata files hold Xbox user and device data: keep this copy private");
+                return Ok;
+            }
+            default:
+                throw new UsageException($"Unknown pgs command '{sub}'. Use find, list, extract or backup.");
+        }
+    }
+
+    private static PgsSaveRoot? OpenPgs(string path, TextWriter stderr)
+    {
+        var root = PgsSaves.TryOpen(path);
+        if (root is null) stderr.WriteLine($"error: '{path}' is not a pgs save root (a u_<xuid>_<gameId> folder).");
+        return root;
+    }
+
+    private static string? PgsTitle(string gameId)
+        => GamePassStorage.Adapters.Catalog.GameCatalog.PgsTitles.TryGetValue(gameId, out var t) ? t.Title : null;
 
     private static int Sanitize(Arguments a, TextWriter stdout, TextWriter stderr, Ctx ctx)
     {

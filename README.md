@@ -24,6 +24,8 @@ no package dependencies and no game code.
   **wrap** edited files back, using a game's known layout (43 titles catalogued) or a generic one.
 - **Gate writes** structurally and by process (refuse while the game runs), composable.
 - **Inspect** what a blob holds through a game adapter, or generically (size, SHA-256, sniffing).
+- **Read PGS saves**, the file-oriented layout newer GDK titles keep under `XboxGames\GameSave\pgs`:
+  find them, list a snapshot, extract the save files untouched, back up the whole root. Read-only by design.
 - **Snapshot and compare** a store around a cloud sync; **diagnose** and explicitly **repair**.
 
 It was extracted from [Abiotic Editor](https://github.com/ChristopherVR/AbioticEditor), which uses
@@ -60,6 +62,7 @@ wgs import    <store> <folder> --backup <dir> [--dry-run]
 wgs unwrap    <store> <out-folder> [--layout <spec>]    # the save as the game lays it out, no Xbox wrapper
 wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
 wgs sanitize  <store> <out-folder>                    # shareable copy: structure kept, blobs zero-filled
+wgs pgs find | list <root> | extract <root> <out> | backup <root> <dest>   # newer GDK saves (read-only)
 ```
 
 `put`, `delete`, `restore`, `import` and `wrap` write. Each refuses without a backup folder (or
