@@ -12,13 +12,21 @@ library by `python tests/fixtures/generate_synthetic.py`, using the wire layout 
 `docs/wgs-format.md`. All identifiers and payloads are fabricated; there is no account or player
 data. Tests exercise fixture parsing, export/import, preserving untouched blobs and manifest tails,
 and restoring with colliding ids or interrupted writes. This is regression coverage, not evidence
-of support for a real game's multi-blob saves. Real sanitized multi-blob captures are still needed
-before claiming such support.
+of support for a real game's multi-blob saves; `RealMultiBlob` is that evidence.
+
+`RealMultiBlob/0009000000000002_00000000000000000000000000000001` is a real store written by the game
+for package `BethesdaSoftworks.ProjectTitan_3275kfvn8vcwc`, captured on 2026-10-08 with
+`wgs sanitize`: `containers.index` and both `container.N` manifests are byte for byte as the game
+wrote them, except the index's root GUID, which is zeroed; every blob is zero-filled at its real size.
+The folder name replaces the real account id. It keeps the real package family name, container and
+blob names and ETags, none of which identify a person. `GAME-AUTOSAVE1` holds six blobs, the first
+real multi-blob container in this repository; `RealMultiBlobFixtureTests` pins its layout.
 
 Policy for new fixtures:
 
-- Keep each fixture under 2 MB and sanitize it: synthetic account, package and world ids, no player
-  names, no paths from a real machine. Say in this file where it came from.
+- Keep each fixture under 2 MB and sanitize it (`wgs sanitize` does the store part): synthetic account
+  ids, no player names, no paths from a real machine. A real package family name may stay when the
+  fixture is evidence for that title. Say in this file where it came from.
 - Prefer building synthetic payloads inside the test (see the bundle builder in
   `AbioticAdapterTests`) when a real one is not needed to prove a layout.
 - A fixture proves a layout for the title it came from. It is not evidence that other titles work.

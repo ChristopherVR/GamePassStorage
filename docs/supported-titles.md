@@ -4,6 +4,7 @@
 | --- | --- | --- | --- |
 | Abiotic Factor | Yes | Yes | Shipped adapter (`GamePassStorage.Adapters.AbioticFactor`, built into `wgs`). Real sanitized stores and in-game use through [Abiotic Editor](https://github.com/ChristopherVR/AbioticEditor) |
 | 43 catalog titles (below) | Native layout known | Native layout known | Community-sourced mappings in `GamePassStorage.Adapters.Catalog` (built into `wgs`). Synthetic tests only; no real store checked here |
+| `BethesdaSoftworks.ProjectTitan_3275kfvn8vcwc` (title not publicly confirmed) | Yes (container layer) | Multi-blob write tested on a sanitized copy | Real store, sanitized as `tests/fixtures/RealMultiBlob`. Container layer only: no adapter, payloads not interpreted, and no in-game round trip |
 | Any other title | Unverified | Unverified | Works through the generic model. Needs real sanitized fixtures before a support claim, and an adapter to add game knowledge |
 
 ## Adapters
@@ -103,8 +104,9 @@ implementations (see the [format reference](/wgs-format#where-this-knowledge-cam
 
 Other Game Pass titles use the same container layer, so they may well work, but that is not
 evidence. The library's own in-memory tests exercise the API boundary with synthetic stores; they
-do not prove that a particular game's layout (multi-blob manifests are implemented from public
-sources but have no real multi-blob fixture here; different manifest versions are unseen) is supported. `WgsStore` reports layouts it does not understand as `UnsupportedLayout`
+do not prove that a particular game's layout is supported. Multi-blob manifests are verified against
+one real store (see the [format reference](/wgs-format#multi-blob-containers)); different manifest
+versions are unseen. `WgsStore` reports layouts it does not understand as `UnsupportedLayout`
 rather than guessing.
 
 ## Trying it on another title
@@ -126,12 +128,13 @@ rewritten container in-game needs a real sync on a real machine. Use
 
 A sanitized real store is the most valuable contribution. To make one:
 
-1. Close the game and the Xbox app, then copy the whole `wgs\<XUID>_<SCID>` folder.
-2. **Sanitize it.** Blob contents are the game's own save data and can hold personal information.
-   Replace each blob with same-sized filler bytes (or a minimal valid save you created yourself),
-   keeping file names and sizes exactly. Check `containers.index` for anything you would rather not
-   share; it records the package family name and container names, but no account details beyond the
-   folder name, so rename the `<XUID>_<SCID>` folder to something neutral.
+1. Close the game and the Xbox app.
+2. **Sanitize it** with `wgs sanitize <store> <out-folder>`. It copies `containers.index` and every
+   `container.N` byte for byte, zeroes the index's root GUID (its meaning is undocumented), and
+   replaces every blob file with zero bytes of the same length. Name the output folder something
+   neutral such as `0009000000000002_00000000000000000000000000000001`: the store's own folder name is
+   your account id (XUID). The index still records the package family name, container names and
+   ETags; check that you are happy to share those.
 3. Confirm `wgs diagnose` still opens the sanitized copy.
 4. Open an issue or pull request at
    [ChristopherVR/GamePassStorage](https://github.com/ChristopherVR/GamePassStorage) with the game

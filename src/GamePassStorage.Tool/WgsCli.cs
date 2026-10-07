@@ -50,6 +50,7 @@ public static class WgsCli
           wgs import    <store> <folder> --backup <dir> [--dry-run]
           wgs unwrap    <store> <out-folder> [--layout <spec>]       # the game's plain save files, no Xbox wrapper
           wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
+          wgs sanitize  <store> <out-folder>                   # shareable copy: structure kept, blobs zero-filled
           (layouts: container-folders[:<suffix>], one-file[:<suffix>], blobs[:<container>]; default: the game's own, else container-folders)
                                                              Add or replace containers from an export folder.
 
@@ -101,6 +102,7 @@ public static class WgsCli
                 "import" => Import(rest, stdout, stderr, ctx),
                 "unwrap" => Unwrap(rest, stdout, stderr, ctx),
                 "wrap" => Wrap(rest, stdout, stderr, ctx),
+                "sanitize" => Sanitize(rest, stdout, stderr, ctx),
                 _ => UsageError(stderr, $"Unknown command '{command}'."),
             };
         }
@@ -574,6 +576,24 @@ public static class WgsCli
             return Failure;
         }
         stdout.WriteLine($"restored {result.Store!.Containers.Count} container(s) from {backupFolder}; previous store at {result.SafetyCopyPath}");
+        return Ok;
+    }
+
+    private static int Sanitize(Arguments a, TextWriter stdout, TextWriter stderr, Ctx ctx)
+    {
+        var storePath = a.Positional(0, "store");
+        var folder = a.Positional(1, "out-folder");
+        a.EnsureConsumed();
+        if (!TryOpen(ctx, storePath, stderr, out var store)) return Failure;
+        var result = store.TrySanitizedCopyTo(folder);
+        foreach (var s in result.Skipped) stdout.WriteLine($"skipped {s}");
+        if (!result.Succeeded)
+        {
+            stderr.WriteLine($"error: {result.Status}: {result.Message}");
+            return Failure;
+        }
+        stdout.WriteLine($"sanitized copy at {folder}: {result.StructureFiles} structure file(s) kept, {result.BlobsReplaced} blob file(s) zero-filled");
+        stdout.WriteLine("the folder name is yours to choose; the store's own name holds the account id (XUID)");
         return Ok;
     }
 

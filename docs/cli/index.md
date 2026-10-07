@@ -369,3 +369,16 @@ before the first write. Existing containers have only the mapped blobs replaced;
 are created never-uploaded (no ETag). Files the layout does not recognise are listed as ignored and
 left alone. Layouts that cannot be inverted (Starfield, State of Decay 2, One Lonely Outpost) refuse.
 As with every write, Xbox still has to accept the change on its next sync.
+
+## wgs sanitize
+
+```console
+wgs sanitize <store> <out-folder>
+```
+
+Writes a copy of the store that can be shared in a bug report or kept as a test fixture.
+`containers.index` and every `container.N` are copied byte for byte, except that the index's root GUID
+is zeroed in place. Every other file in a container folder (current, previous and orphaned blobs) is
+replaced with zero bytes of the same length. Files outside container folders are left out and listed.
+The output keeps the package family name, container and blob names, sizes, states and ETags. Choose
+a neutral output folder name: the store's own folder name is your account id (XUID). Reads the store only.

@@ -59,6 +59,7 @@ wgs export    <store> <out-folder>                    # every container's blobs 
 wgs import    <store> <folder> --backup <dir> [--dry-run]
 wgs unwrap    <store> <out-folder> [--layout <spec>]    # the save as the game lays it out, no Xbox wrapper
 wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
+wgs sanitize  <store> <out-folder>                    # shareable copy: structure kept, blobs zero-filled
 ```
 
 `put`, `delete`, `restore`, `import` and `wrap` write. Each refuses without a backup folder (or
@@ -154,8 +155,8 @@ read and write rules, sources, and what is still unverified.
 
 The in-memory tests exercise the API boundary with synthetic stores; they are not evidence that a
 particular game's layout is supported. Multi-blob manifests are implemented from public sources
-(XGP-save-extractor, libNOM.io, XblContainerReader, GPSaveConverter) but there is no real multi-blob
-fixture yet. `WgsStore` reports layouts it does not understand as `UnsupportedLayout` rather than
+(XGP-save-extractor, libNOM.io, XblContainerReader, GPSaveConverter) and verified against one real
+store, kept as a sanitized fixture (`tests/fixtures/RealMultiBlob`). `WgsStore` reports layouts it does not understand as `UnsupportedLayout` rather than
 guessing.
 
 ### Adding a game

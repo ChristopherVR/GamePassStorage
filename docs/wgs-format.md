@@ -135,9 +135,14 @@ N x { 128-byte UTF-16 name, 16-byte cloud id, 16-byte on-disk id }
 
 Source: Z1ni/XGP-save-extractor's `main.py` reads exactly this (a `file_count`, then per file a
 128-byte UTF-16 name, a GUID and a copy of the GUID, "each entry occupies 160 bytes"), which is
-consistent with LukeFZ/XblContainerReader, Fr33dan/GPSaveConverter and libNOM.io. It was checked
-here against that source's code, not against a real multi-blob store: this repository has no
-multi-blob fixture. Treat the layout as documented but unverified on a real game.
+consistent with LukeFZ/XblContainerReader, Fr33dan/GPSaveConverter and libNOM.io.
+
+**Verified on a real store (2026-10).** A store written by the game for package
+`BethesdaSoftworks.ProjectTitan_3275kfvn8vcwc` holds a container (`GAME-AUTOSAVE1`) with six blobs
+(`game.details`, `game.details-BACKUP`, `game_duration.dat`, `game_duration.dat-BACKUP` and two
+`.checksum` blobs). Its `container.3` is exactly 968 bytes, the 8-byte header plus six 160-byte
+entries, with both GUIDs equal in every entry and nothing after the last. A sanitized copy is the
+fixture `tests/fixtures/RealMultiBlob`, and `RealMultiBlobFixtureTests` pins the layout.
 
 How the library handles it:
 
@@ -149,9 +154,12 @@ How the library handles it:
   known stores) and the leading constant are written back as read.
 - A manifest is **malformed** (reported by `Diagnose`, never guessed at) when it is shorter than its
   count promises, declares zero or an absurd number (over 1024) of blobs, or repeats a blob name.
-- **Assumption:** for a multi-blob container the index entry's size is written as the total of all
-  blob sizes. The sources describe that field only for single-blob containers. Reading never
-  depends on it.
+- For a multi-blob container the index entry's size is the total of all blob sizes. The sources
+  describe that field only for single-blob containers; the real store above confirms it (56,661 bytes
+  for the six blobs). Reading never depends on it.
+- Container names may hold `/` (seen in a real Call of Duty HQ store, `38985CA0.COREBase_5bkah9njm3e9g`:
+  `7300/cerberus_savegame_progression_1`, `sp24/savegame_1.svg`). It is part of the name, not a
+  folder: the container still lives in one GUID folder. Unwrapping treats it as a path separator.
 - The write-side name limit is 63 characters (the 64-character field keeps a terminator); names
   that differ only by case are refused.
 
