@@ -117,6 +117,14 @@ public interface IWgsGameAdapter
     /// <summary>Decode/encode hook for the game's payloads. Null when the adapter offers none.</summary>
     IWgsPayloadCodec? Codec => null;
 
+    /// <summary>Recomputes blobs that depend on others (a checksum beside a save) on every write. Null when nothing does.</summary>
+    IWgsDerivedBlobs? DerivedBlobs => null;
+
+    /// <summary>A named alternative native layout this game offers (for instance the Steam form of a save, which may need a
+    /// parameter such as an account id), or null when <paramref name="spec"/> is not one of its own. The tool tries this
+    /// before the generic layout specs.</summary>
+    IWgsNativeLayout? CreateNativeLayout(string spec) => null;
+
     /// <summary>How this game's containers map to the plain save files it keeps outside Xbox (the Steam or Epic layout),
     /// so a save can be taken out of the wrapper and put back. Null when the adapter offers none; the
     /// declarative layouts in <see cref="WgsNativeLayouts"/> can still be chosen by hand.</summary>
@@ -257,6 +265,7 @@ public sealed class WgsGameAdapterRegistry
             Clock = baseline.Clock,
             Log = baseline.Log,
             BlobInspector = baseline.BlobInspector ?? adapter.BlobInspector,
+            DerivedBlobs = baseline.DerivedBlobs ?? adapter.DerivedBlobs,
             WriteGate = gate is null
                 ? baseline.WriteGate
                 : WgsWriteGates.Combine(baseline.WriteGate ?? WgsWriteGates.Structural, gate),

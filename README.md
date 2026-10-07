@@ -21,7 +21,7 @@ no package dependencies and no game code.
 - **Restore** a whole-folder backup, with a safety copy of the current store first.
 - **Export** every container's blobs to a folder with a manifest, and **import** a folder back.
 - **Unwrap** a save into the plain files the game uses outside Xbox (its Steam or Epic layout), and
-  **wrap** edited files back, using a game's known layout (43 titles catalogued) or a generic one.
+  **wrap** edited files back, using a game's known layout (76 titles catalogued) or a generic one.
 - **Gate writes** structurally and by process (refuse while the game runs), composable.
 - **Inspect** what a blob holds through a game adapter, or generically (size, SHA-256, sniffing; for
   any Unreal Engine save, the engine version and save-game class from its GVAS header).
@@ -38,7 +38,7 @@ it for Abiotic Factor's Game Pass saves. That is the only title verified so far;
 ```console
 dotnet add package GamePassStorage          # the library
 dotnet add package GamePassStorage.Adapters.AbioticFactor   # optional: the Abiotic Factor adapter
-dotnet add package GamePassStorage.Adapters.Catalog         # optional: native layouts for 43 titles
+dotnet add package GamePassStorage.Adapters.Catalog         # optional: native layouts for 76 titles
 dotnet tool install -g GamePassStorage.Tool # the `wgs` command-line tool (adapters built in)
 ```
 
@@ -51,7 +51,8 @@ wgs extract   <store> <container> <out-file>    # copy a blob out
 wgs backup    <store> <destination>             # whole-folder copy
 wgs snapshot  <store> -o before.json            # SHA-256 fingerprint of every container
 wgs compare   before.json after.json            # what a cloud sync changed
-wgs put       <store> <container> <blob> --backup <dir> [--dry-run]
+wgs put       <store> <container> <blob> --backup <dir> [--blob <name>] [--dry-run]
+wgs games     [--json] [--all]                        # every Xbox title with saves here, and what support it gets
 wgs find      [--package <text>] [--exact] [--json]   # find wgs stores on this machine
 wgs blobs     <store> <container> [--json]            # blobs inside a container
 wgs delete    <store> <container> --backup <dir> [--dry-run]
@@ -123,6 +124,7 @@ All services are injected through `WgsStoreOptions`; every member has a real def
 | `IWgsWriteGate` | Decides whether a write may proceed. `WgsWriteGates.Structural` (the default) refuses unresolved cloud conflicts and undefined container states. `WgsWriteGates.RefuseWhilePackageRuns()` refuses while the store's own package (the game) runs, for any title; `WgsWriteGates.RefuseWhileRunning("MyGame*")` refuses while a named process runs, and `WgsWriteGates.Combine(...)` composes gates. |
 | `IWgsGameAdapter` | A game adapter: matches a package family, classifies containers, describes blob contents, supplies an inspector, gate and codec. Resolved by `WgsGameAdapterRegistry`; `GenericWgsAdapter` is the always-last fallback. |
 | `IWgsNativeLayout` | Maps containers and blobs to the game's own files and back, for unwrap and wrap. `WgsNativeLayouts` has the declarative ones and `Map(...)` for custom mappings; an adapter supplies one through `NativeLayout`. |
+| `IWgsDerivedBlobs` | Recomputes blobs a game keeps in step with others (a checksum beside a save) on every write. An adapter supplies one through `DerivedBlobs`. |
 | `IWgsProcessLister` | Lists running processes, so a process gate is testable. |
 
 ## Safety rules the library enforces
@@ -156,7 +158,7 @@ read and write rules, sources, and what is still unverified.
 | Title | Read | Write | Evidence |
 | --- | --- | --- | --- |
 | Abiotic Factor | Yes | Yes | Shipped adapter (`GamePassStorage.Adapters.AbioticFactor`, built into `wgs`); real sanitized stores and in-game use through Abiotic Editor |
-| 43 catalogued titles (Palworld, Starfield, Forza Horizon 5, Hades, Remnant 2, ...) | Native layout | Native layout | `GamePassStorage.Adapters.Catalog`, built into `wgs`: community-sourced mappings from XGP-save-extractor, synthetic tests only. See [the list](docs/supported-titles.md#the-catalog) |
+| 76 catalogued titles (Palworld, Starfield, Forza Horizon 5, Hades, Avowed, DOOM: The Dark Ages, ...) | Native layout | Native layout | `GamePassStorage.Adapters.Catalog`, built into `wgs`: mappings from XGP-save-extractor and XgpSaveTools; DOOM: The Dark Ages and Call of Duty HQ also checked on real stores. No in-game round trip. See [the list](docs/supported-titles.md#the-catalog) |
 | Any other title | Unverified | Unverified | Works through the generic model; needs real sanitized fixtures before a support claim |
 
 The in-memory tests exercise the API boundary with synthetic stores; they are not evidence that a

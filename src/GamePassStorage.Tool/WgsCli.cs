@@ -32,8 +32,9 @@ public static class WgsCli
           wgs backup    <store> <destination>                Copy the whole store folder.
           wgs snapshot  <store> [-o <file.json>]             Fingerprint every container (SHA-256).
           wgs compare   <before.json> <after.json>           Describe what changed between snapshots.
-          wgs put       <store> <container> <blob-file> --backup <dir> [--dry-run]
+          wgs put       <store> <container> <blob-file> --backup <dir> [--blob <name>] [--dry-run]
                                                              Add or replace a container's blob.
+          wgs games     [--json] [--all]                      # every Xbox title with saves here, and what support it gets
           wgs find      [--package <text>] [--exact] [--json]
                                                              Find wgs stores on this machine.
           wgs blobs     <store> <container> [--json]         List the blobs inside a container.
@@ -55,7 +56,8 @@ public static class WgsCli
           wgs pgs list    <user-root> [--snapshot <n>] [--json]
           wgs pgs extract <user-root> <out-folder> [--snapshot <n>]   # the save files, untouched
           wgs pgs backup  <user-root> <destination>                   # everything, metadata included (private)
-          (layouts: container-folders[:<suffix>], one-file[:<suffix>], blobs[:<container>]; default: the game's own, else container-folders)
+          (layouts: container-folders[:<suffix>], one-file[:<suffix>], blobs[:<container>], or one the game offers such as
+           steam:<SteamID64> for DOOM; default: the game's own, else container-folders)
                                                              Add or replace containers from an export folder.
 
         <store> is a wgs folder (the one holding containers.index) or a folder above it.
@@ -108,6 +110,7 @@ public static class WgsCli
                 "wrap" => Wrap(rest, stdout, stderr, ctx),
                 "sanitize" => Sanitize(rest, stdout, stderr, ctx),
                 "pgs" => Pgs(rest, stdout, stderr),
+                "games" => Games(rest, stdout, ctx),
                 _ => UsageError(stderr, $"Unknown command '{command}'."),
             };
         }
@@ -399,6 +402,7 @@ public static class WgsCli
         var backup = a.Option("--backup");
         var dryRun = a.Flag("--dry-run");
         var gate = a.Option("--refuse-if-running");
+        var blobName = a.Option("--blob");
         var storePath = a.Positional(0, "store");
         var name = a.Positional(1, "container");
         var blobPath = a.Positional(2, "blob-file");
@@ -408,6 +412,18 @@ public static class WgsCli
         var blob = File.ReadAllBytes(blobPath);
 
         var existing = store.Find(name);
+        if (blobName is not null && existing is null)
+        {
+            stderr.WriteLine($"error: --blob names a blob of an existing container, and there is no container '{name}'.");
+            return Failure;
+        }
+        if (dryRun && blobName is not null)
+        {
+            var verdict = store.AssessWrite();
+            stdout.WriteLine($"would replace blob '{blobName}' of '{name}' ({blob.Length:N0} bytes); other blobs stay, and any the game keeps in step are recomputed");
+            foreach (var c in verdict.Concerns) stdout.WriteLine($"{(c.Blocking ? "BLOCKS WRITES" : "note")}: {c.Message}");
+            return verdict.CanWrite ? Ok : Failure;
+        }
         if (dryRun)
         {
             if (existing is null)
@@ -428,7 +444,9 @@ public static class WgsCli
         if (!TakeBackup(store, backup!, stderr)) return Failure;
         var result = existing is null
             ? store.TryAddOrReplaceContainer(name, blob)
-            : store.TryWriteBlob(existing, blob);
+            : blobName is not null
+                ? store.TryWriteNamedBlob(existing, blobName, blob)
+                : store.TryWriteBlob(existing, blob);
         if (!result.Status.Equals(WgsOperationStatus.Ok))
         {
             stderr.WriteLine($"error: {result.Status}: {result.Message}");
@@ -644,6 +662,78 @@ public static class WgsCli
         }
     }
 
+    /// <summary>One row of <c>wgs games</c>: a title with a save folder here and what this tool can do with it.</summary>
+    private sealed record GameRow(string PackageFamilyName, string Title, string AdapterId, string Saves, int Stores, int Containers,
+        int MultiBlobContainers, string? Problem, string NativeLayout, IReadOnlyList<string> Capabilities, IReadOnlyList<string> Notes);
+
+    // Reviews every title with a save folder on this machine: which adapter serves it, what is in the folder, and what
+    // the tool can do with it. Opens stores read-only; never writes.
+    private static int Games(Arguments a, TextWriter stdout, Ctx ctx)
+    {
+        var json = a.Flag("--json");
+        var all = a.Flag("--all");
+        a.EnsureConsumed();
+        var rows = new List<GameRow>();
+        foreach (var folder in WgsStoreDiscovery.FindSaveFolders())
+        {
+            var adapter = ctx.Registry.Resolve(folder.PackageFamilyName);
+            int containers = 0, multi = 0;
+            string? problem = null;
+            foreach (var location in folder.Stores)
+            {
+                var opened = WgsStore.TryOpen(location.StorePath);
+                if (!opened.Succeeded) { problem ??= $"{Path.GetFileName(location.StorePath)}: {opened.Status}"; continue; }
+                var d = opened.Store!.Diagnose();
+                containers += d.ContainerCount;
+                multi += d.MultiBlobContainers.Count;
+                if (!d.WriteAssessment.CanWrite) problem ??= d.WriteAssessment.BlockingMessage();
+            }
+            var saves = folder.Stores.Count == 0 ? "none (empty save folder: cloud-only, or not played on this account)"
+                : $"{folder.Stores.Count} store(s), {containers} container(s)" + (multi > 0 ? $", {multi} multi-blob" : "");
+            rows.Add(new GameRow(folder.PackageFamilyName, adapter is GenericWgsAdapter ? folder.PackageFamilyName : adapter.DisplayName,
+                adapter.Id, saves, folder.Stores.Count, containers, multi, problem,
+                (adapter.NativeLayout ?? WgsNativeLayouts.ContainerFolders).Name + (adapter.NativeLayout is null ? " (generic)" : ""),
+                Capabilities(adapter), adapter.ContainerNameConventions));
+        }
+        var pgs = PgsSaves.Find();
+        if (json)
+        {
+            stdout.WriteLine(JsonSerializer.Serialize(new { Wgs = rows, Pgs = pgs.Select(r => new { r.Path, r.GameId, Title = PgsTitle(r.GameId), r.CurrentSnapshot, r.Snapshots }) }, Json));
+            return Ok;
+        }
+        var shown = all ? rows : rows.Where(r => r.Stores > 0 || r.AdapterId != GenericWgsAdapter.GenericId).ToList();
+        foreach (var r in shown)
+        {
+            stdout.WriteLine($"{r.Title}  [{r.AdapterId}]");
+            if (r.Title != r.PackageFamilyName) stdout.WriteLine($"  package: {r.PackageFamilyName}");
+            stdout.WriteLine($"  saves: {r.Saves}");
+            if (r.Problem is not null) stdout.WriteLine($"  attention: {r.Problem}");
+            stdout.WriteLine($"  native layout: {r.NativeLayout}");
+            stdout.WriteLine($"  can: {string.Join(", ", r.Capabilities)}");
+            foreach (var n in r.Notes) stdout.WriteLine($"  note: {n}");
+        }
+        var hidden = rows.Count - shown.Count;
+        if (hidden > 0) stdout.WriteLine($"({hidden} more package(s) with an empty save folder and no adapter; --all lists them)");
+        foreach (var r in pgs)
+        {
+            stdout.WriteLine($"{PgsTitle(r.GameId) ?? $"PGS game {r.GameId}"}  [pgs]");
+            stdout.WriteLine($"  saves: {r.Snapshots.Count} snapshot(s), current {r.CurrentSnapshot ?? "none"}; read-only (wgs pgs list|extract|backup)");
+        }
+        if (rows.Count == 0 && pgs.Count == 0) stdout.WriteLine("no Xbox save folders found on this machine");
+        return Ok;
+    }
+
+    private static List<string> Capabilities(IWgsGameAdapter adapter)
+    {
+        List<string> can = ["list/diagnose/extract/backup", "put/delete/restore/import (gated)", "unwrap/wrap", "sanitize"];
+        if (adapter.BlobInspector is not null) can.Add("names orphaned data");
+        if (adapter.Codec is not null) can.Add($"decode ({adapter.Codec.Name})");
+        if (adapter.DerivedBlobs is not null) can.Add("keeps checksums in step on write");
+        if (adapter.CreateNativeLayout("steam:00000000000000000") is not null) can.Add("steam:<SteamID64> layout");
+        can.Add(adapter is GenericWgsAdapter ? "generic inspect" : "game-aware inspect");
+        return can;
+    }
+
     private static PgsSaveRoot? OpenPgs(string path, TextWriter stderr)
     {
         var root = PgsSaves.TryOpen(path);
@@ -736,7 +826,10 @@ public static class WgsCli
     {
         if (spec is not null)
         {
-            return WgsNativeLayouts.Parse(spec)
+            IWgsNativeLayout? own;
+            try { own = adapter.CreateNativeLayout(spec); }
+            catch (ArgumentException ex) { throw new UsageException($"--layout {spec}: {ex.Message}"); }
+            return own ?? WgsNativeLayouts.Parse(spec)
                 ?? throw new UsageException($"Unknown layout '{spec}'. Use container-folders[:<suffix>], one-file[:<suffix>] or blobs[:<container>].");
         }
         // container-folders is lossless for any store, so it is the default when the game has no layout of its own.

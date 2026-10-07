@@ -70,7 +70,8 @@ internal sealed class MemFs : IWgsFileSystem
     public IEnumerable<string> EnumerateDirectories(string directory)
     {
         var prefix = N(directory) + "/";
-        return Files.Keys.Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
+        // Directories exist through the files under them and through CreateDirectory (so an empty one is listed too).
+        return Files.Keys.Concat(_dirs.Select(d => d + "/")).Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
             .Select(k => k[prefix.Length..])
             .Where(r => r.Contains('/'))
             .Select(r => prefix + r.Split('/')[0])

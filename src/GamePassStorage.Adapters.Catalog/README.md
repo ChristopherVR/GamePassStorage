@@ -9,9 +9,11 @@ wgs unwrap <store> <out-folder>
 wgs wrap   <store> <folder> --backup <dir> --dry-run
 ```
 
-43 titles, among them Palworld, Starfield, Forza Horizon 5, Hades, Remnant 2, Oblivion Remastered, Persona
-5 Royal, Control and DOOM Eternal. Package family names and mappings come from
-[XGP-save-extractor](https://github.com/Z1ni/XGP-save-extractor) (MIT). They are **not verified against
+76 titles, among them Palworld, Starfield, Forza Horizon 5, Hades, Remnant 2, Oblivion Remastered, Avowed,
+Kingdom Come: Deliverance II, Hollow Knight: Silksong, DOOM Eternal and DOOM: The Dark Ages. Package family
+names and mappings come from [XGP-save-extractor](https://github.com/Z1ni/XGP-save-extractor) and
+[XgpSaveTools](https://github.com/brodrigz/XgpSaveTools) (both MIT). The DOOM titles also keep their checksum
+files in step on every write and offer the encrypted Steam form (`--layout steam:<SteamID64>`). They are **not verified against
 real stores by this project**; see the
 [supported titles page](https://github.com/ChristopherVR/GamePassStorage/blob/main/docs/supported-titles.md#the-catalog)
 for each title's layout and evidence.

@@ -184,4 +184,23 @@ public sealed class WgsStoreOptions
 
     /// <summary>Write gate. Null means <see cref="WgsWriteGates.Structural"/>.</summary>
     public IWgsWriteGate? WriteGate { get; init; }
+
+    /// <summary>Game adapter hook that recomputes blobs which depend on others (checksums, indexes) on every write. Optional.</summary>
+    public IWgsDerivedBlobs? DerivedBlobs { get; init; }
+}
+
+/// <summary>
+/// Recomputes blobs that a game keeps in step with other blobs of the same container, such as a checksum file
+/// beside a save. Every write through the store (a single blob, several, a new container, an import or a wrap)
+/// asks it, so an edit can never leave a stale checksum behind. Blobs the caller names explicitly win over derived ones.
+/// </summary>
+public interface IWgsDerivedBlobs
+{
+    /// <summary>
+    /// The blobs to write alongside <paramref name="changes"/>. <paramref name="after"/> is the whole container as it will
+    /// be (current blobs with the changes applied). Return an empty map when nothing depends on what changed. Throw
+    /// <see cref="InvalidDataException"/> to refuse a write whose result would be inconsistent.
+    /// </summary>
+    IReadOnlyDictionary<string, byte[]> Derive(string containerName, IReadOnlyDictionary<string, byte[]> changes,
+        IReadOnlyDictionary<string, byte[]> after);
 }

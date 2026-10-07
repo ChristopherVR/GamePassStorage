@@ -180,7 +180,7 @@ Compares two snapshots and prints one line per difference, or `identical`:
 ## wgs put
 
 ```console
-wgs put <store> <container> <blob-file> --backup <dir> [--dry-run]
+wgs put <store> <container> <blob-file> --backup <dir> [--blob <name>] [--dry-run]
 ```
 
 Adds a container, or replaces an existing container's blob, with the bytes of `<blob-file>`. A
@@ -344,7 +344,7 @@ wgs unwrap <store> <out-folder> [--layout <spec>]
 ```
 
 Writes the save as the game itself lays it out outside Xbox (the Steam or Epic files), without the
-container wrapper. The layout is the matching game adapter's own (`wgs adapters` shows it; 43 titles
+container wrapper. The layout is the matching game adapter's own (`wgs adapters` shows it; 76 titles
 come with the built-in catalog), else `container-folders`, which is lossless for any store. `--layout`
 overrides it:
 
@@ -407,3 +407,17 @@ Newer GDK titles keep saves in a second, file-oriented layout under `<drive>:\Xb
 
 There is no write command. Nothing public says how the metadata, snapshots and cloud sync must
 agree, and a wrong guess can lose a save; the same choice is made by XgpSaveTools.
+
+## wgs games
+
+```console
+wgs games [--json] [--all]
+```
+
+Reviews every Xbox title with a save folder on this machine: each package under
+`%LOCALAPPDATA%\Packages\*\SystemAppData\wgs` (and stores under `XboxGames\GameSave\wgs`), plus PGS
+save roots. For each it shows which adapter serves it, what the folder holds (stores, containers,
+multi-blob containers, or nothing: an empty save folder is normal for a cloud-only title or one not
+played on this account), anything that would block a write (an unresolved cloud conflict, say), the
+native layout `unwrap` would use, and what the tool can do with it. Packages with an empty folder and no
+adapter are counted but only listed with `--all`. It opens stores read-only and never writes.

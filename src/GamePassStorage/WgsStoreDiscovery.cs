@@ -19,6 +19,10 @@ public enum WgsStoreLocationSource
 public sealed record WgsStoreLocation(string PackageFamilyName, string Xuid, string Scid, string StorePath,
     WgsStoreLocationSource Source);
 
+/// <summary>A package's <c>SystemAppData\wgs</c> folder and the stores in it. A folder with no stores is normal for a
+/// title that keeps its saves only in the cloud, or one installed but never played on this account.</summary>
+public sealed record WgsSaveFolder(string PackageFamilyName, string Path, IReadOnlyList<WgsStoreLocation> Stores);
+
 /// <summary>Where to look. Every member has a real default; inject them to test on any OS.</summary>
 public sealed class WgsStoreDiscoveryOptions
 {
@@ -90,6 +94,37 @@ public static class WgsStoreDiscovery
             .OrderBy(l => l.PackageFamilyName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(l => l.StorePath, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Every package that has a save folder, with its stores, including folders that hold none. Covers
+    /// <c>%LOCALAPPDATA%\Packages\*\SystemAppData\wgs</c>; stores under <c>XboxGames\GameSave\wgs</c> are grouped by the
+    /// package family their index records.
+    /// </summary>
+    public static IReadOnlyList<WgsSaveFolder> FindSaveFolders(WgsStoreDiscoveryOptions? options = null)
+    {
+        var opts = options ?? new WgsStoreDiscoveryOptions();
+        var stores = Find(null, false, opts);
+        var folders = new Dictionary<string, (string Path, List<WgsStoreLocation> Stores)>(StringComparer.OrdinalIgnoreCase);
+        var localAppData = opts.LocalAppData ?? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrEmpty(localAppData))
+        {
+            foreach (var package in Children(opts.FileSystem, Path.Combine(localAppData, "Packages")))
+            {
+                var wgs = Path.Combine(package, "SystemAppData", "wgs");
+                if (opts.FileSystem.DirectoryExists(wgs)) folders[Path.GetFileName(package)] = (wgs, []);
+            }
+        }
+        foreach (var s in stores)
+        {
+            if (!folders.TryGetValue(s.PackageFamilyName, out var f))
+            {
+                folders[s.PackageFamilyName] = f = (Path.GetDirectoryName(s.StorePath) ?? s.StorePath, []);
+            }
+            f.Stores.Add(s);
+        }
+        return folders.Select(kv => new WgsSaveFolder(kv.Key, kv.Value.Path, kv.Value.Stores))
+            .OrderBy(f => f.PackageFamilyName, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static bool Matches(string family, string? filter, bool exact)

@@ -135,7 +135,14 @@ container's blob names, so a mapping that drops part of a name can find the cont
 Implement `IWgsNativeLayout` directly when a file is built from a whole container (`UnwrapContainer`,
 for example several blobs joined into one file), when content needs transforming (`ToNativeContent` and
 `ToBlobContent`), or when the mapping cannot be inverted (`CanWrap => false`, or pass a null inverse to
-`Map`). `GamePassStorage.Adapters.Catalog` holds 43 worked examples, from one-liners to Starfield's part
+`Map`).
+
+Two more optional hooks: `DerivedBlobs` (`IWgsDerivedBlobs`) recomputes blobs the game keeps in step
+with others on every write through the store, for example id Tech's `.checksum` files, so no write path
+can leave one stale; and `CreateNativeLayout(spec)` offers named alternative layouts, such as DOOM's
+`steam:<SteamID64>`, which `wgs --layout` tries before the generic specs.
+
+`GamePassStorage.Adapters.Catalog` holds 76 worked examples, from one-liners to Starfield's part
 joining.
 
 Unwrap reads only. Wrap uses the same checks as `import`: every file is read and planned before the first

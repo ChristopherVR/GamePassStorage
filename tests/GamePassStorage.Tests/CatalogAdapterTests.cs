@@ -36,10 +36,10 @@ public class CatalogAdapterTests
     /// <summary>Unwraps with the layout, wraps the result into an empty copy of the same container names and compares every blob.</summary>
     private static void AssertRoundTrip(MemFs fs, WgsStore store, IWgsNativeLayout layout)
     {
-        Assert.True(store.TryUnwrapTo("/native", layout).Succeeded);
+        Assert.True(store.TryUnwrapTo("/roundtrip", layout).Succeeded);
         var reopened = WgsStore.Open(Root, Options(fs));
         var before = reopened.Containers.ToDictionary(c => c.Name, c => reopened.ReadBlobs(c));
-        var result = reopened.TryWrap("/native", layout);
+        var result = reopened.TryWrap("/roundtrip", layout);
         Assert.True(result.Succeeded, result.Message);
         var after = WgsStore.Open(Root, Options(fs));
         foreach (var (name, blobs) in before)

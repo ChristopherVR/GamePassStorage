@@ -892,6 +892,38 @@ public sealed partial class WgsStore
     /// files this attempt created are removed and the in-memory entry is restored, so the previous
     /// generation stays the only one described.
     /// </summary>
+    /// <summary>The changes plus whatever <see cref="WgsStoreOptions.DerivedBlobs"/> derives from them, for an existing container.</summary>
+    private IReadOnlyDictionary<string, byte[]> WithDerived(WgsContainer container, IReadOnlyDictionary<string, byte[]> changes)
+    {
+        if (_options.DerivedBlobs is null) return changes;
+        var current = TryReadBlobs(container);
+        if (!current.Succeeded)
+        {
+            throw new WgsWriteRefusedException(
+                $"'{container.Name}' could not be read to recompute the blobs that depend on this change ({current.Status}): {current.Message}");
+        }
+        var after = new Dictionary<string, byte[]>(current.Blobs!, StringComparer.Ordinal);
+        foreach (var (name, data) in changes) after[name] = data;
+        return WithDerived(container.Name, changes, after);
+    }
+
+    private IReadOnlyDictionary<string, byte[]> WithDerived(string containerName, IReadOnlyDictionary<string, byte[]> changes,
+        IReadOnlyDictionary<string, byte[]> after)
+    {
+        if (_options.DerivedBlobs is not { } hook) return changes;
+        var derived = hook.Derive(containerName, changes, after);
+        if (derived.Count == 0) return changes;
+        var merged = new Dictionary<string, byte[]>(changes, StringComparer.Ordinal);
+        foreach (var (name, data) in derived)
+        {
+            if (merged.ContainsKey(name)) continue;   // the caller named it explicitly
+            merged[name] = data;
+            _options.Log.Info($"'{containerName}/{name}' recomputed because it depends on the blobs being written.");
+        }
+        ValidateBlobSet(merged);
+        return merged;
+    }
+
     private void CommitGeneration(WgsContainer container, IReadOnlyDictionary<string, byte[]> requested, bool legacySingle)
     {
         EnsureWritable();
@@ -939,6 +971,8 @@ public sealed partial class WgsStore
                 }
             }
         }
+
+        if (!legacySingle) changes = WithDerived(container, changes);
 
         // Blobs that are not being changed must be intact and settled, or the new manifest would
         // carry a claim this store cannot back.
@@ -1027,6 +1061,7 @@ public sealed partial class WgsStore
     private WgsContainer CreateContainerCore(string containerName, IReadOnlyDictionary<string, byte[]> blobs)
     {
         ValidateBlobSet(blobs);
+        blobs = WithDerived(containerName, blobs, blobs);
         if (Find(containerName) is not null)
         {
             throw new InvalidOperationException($"This store already has a container called '{containerName}'.");
