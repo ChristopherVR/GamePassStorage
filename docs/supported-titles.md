@@ -15,7 +15,7 @@ names container kinds, describes what a blob holds, names orphaned data and adds
 | Adapter | Package | Serves | What it adds |
 | --- | --- | --- | --- |
 | Abiotic Factor | `GamePassStorage.Adapters.AbioticFactor` (built into `wgs`) | `PlayStack.AbioticFactor_3wcqaesafpzfy` | Container classification (`<World>-WC`, `<World>-WC-B`, `Profile*`, `Settings`), the `ABF_SAVE_VERSION` table of contents read without decompressing, settings ini decoding, orphaned world names, and a gate that refuses while `AbioticFactor*` runs. World bodies are Oodle-compressed and Oodle is not bundled, so the adapter reports that instead of decoding. |
-| Catalog | `GamePassStorage.Adapters.Catalog` (built into `wgs`) | The 43 families below | The native layout for `wgs unwrap` and `wgs wrap`. No payload knowledge and no process gate (process names are not known), so the structural gate alone applies. |
+| Catalog | `GamePassStorage.Adapters.Catalog` (built into `wgs`) | The 43 families below | The native layout for `wgs unwrap` and `wgs wrap`. No payload knowledge. `wgs` refuses writes while the title's own package runs (the package gate, which every title gets). |
 
 Every other title is served by the generic adapter: `list`, `diagnose`, `extract`, `put`, `delete`,
 `restore`, `export`, `import` and a generic `inspect` (size, SHA-256, content sniffing) all work. To add a

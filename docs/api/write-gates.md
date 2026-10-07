@@ -26,9 +26,12 @@ public static class WgsWriteGates
     public const string ContradictoryState = "contradictory-state";
     public const string ProcessRunning = "process-running";
     public const string ProcessCheckFailed = "process-check-failed";
+    public const string PackageRunning = "package-running";
 
     public static IWgsWriteGate RefuseWhileRunning(params string[] processNames);
     public static IWgsWriteGate RefuseWhileRunning(IWgsProcessLister lister, params string[] processNames);
+    public static IWgsWriteGate RefuseWhilePackageRuns(params string[] alsoRefuseFor);
+    public static IWgsWriteGate RefuseWhilePackageRuns(IWgsPackageProcessLister lister, params string[] alsoRefuseFor);
     public static IWgsWriteGate Combine(params IWgsWriteGate[] gates);
 }
 ```
@@ -92,6 +95,25 @@ public interface IWgsProcessLister
 }
 public sealed class SystemWgsProcessLister : IWgsProcessLister { public static SystemWgsProcessLister Instance { get; } }
 ```
+
+`RefuseWhilePackageRuns` refuses while any process with the store's own package identity runs. Game Pass
+titles run with the identity of the package whose store they write, so this finds the game without
+knowing its executable (`gamelaunchhelper`, `*-Win64-Shipping`, ...) and works for every title. Pass more
+families to refuse for them too, for example the Xbox app (`Microsoft.GamingApp_8wekyb3d8bbwe`). A hit
+is a blocking `package-running` concern; an unreadable process list is `process-check-failed`. The `wgs`
+tool applies it to every write.
+
+```csharp
+public sealed record WgsPackagedProcess(string ProcessName, int ProcessId, string PackageFamilyName);
+public interface IWgsPackageProcessLister
+{
+    IReadOnlyCollection<WgsPackagedProcess> GetRunningPackagedProcesses();
+}
+public sealed class SystemWgsPackageProcessLister : IWgsPackageProcessLister { public static SystemWgsPackageProcessLister Instance { get; } }
+```
+
+`SystemWgsPackageProcessLister` asks Windows for each process's package family (`GetPackageFamilyName`)
+and skips processes the user cannot open; a game runs as the user. Off Windows it returns nothing.
 
 Inject an `IWgsProcessLister` to test a gate without real processes; the default lists real ones
 with `Process.GetProcesses()`.

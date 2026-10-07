@@ -24,5 +24,7 @@ var layout = opened.Adapter!.NativeLayout ?? WgsNativeLayouts.ContainerFolders;
 var result = opened.Open.Store!.TryUnwrapTo(outFolder, layout);
 ```
 
-The adapters describe payloads generically and add no write gate of their own; every write still goes
-through the library's structural gate, concurrent-change check and generation write.
+The adapters describe payloads generically and add no write gate of their own: process names are not
+known, but `WgsWriteGates.RefuseWhilePackageRuns()` (on by default in `wgs`) finds a running game by its
+package. Every write still goes through the library's structural gate, concurrent-change check and
+generation write.

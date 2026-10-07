@@ -104,7 +104,8 @@ public static class GameCatalog
 }
 
 /// <summary>An adapter whose game knowledge is a catalog entry: it recognises the package and supplies the native layout.
-/// It adds no write gate of its own (the process names are not known), so the structural gate alone applies.</summary>
+/// It adds no write gate of its own (the process names are not known); <see cref="WgsWriteGates.RefuseWhilePackageRuns(string[])"/>
+/// covers a running game by its package instead, and <c>wgs</c> applies it to every store.</summary>
 public sealed class CatalogGameAdapter(CatalogEntry entry) : IWgsGameAdapter
 {
     public CatalogEntry Entry { get; } = entry ?? throw new ArgumentNullException(nameof(entry));

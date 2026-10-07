@@ -751,16 +751,22 @@ public static class WgsCli
         return true;
     }
 
+    /// <summary>The package gate is always on: every title refuses writes while its own package runs, adapter or not.</summary>
     private static WgsStoreOptions OptionsFor(string? refuseIfRunning)
     {
-        if (string.IsNullOrWhiteSpace(refuseIfRunning)) return WgsStoreOptions.Default;
+        if (string.IsNullOrWhiteSpace(refuseIfRunning))
+        {
+            return new WgsStoreOptions { WriteGate = WgsWriteGates.Combine(WgsWriteGates.Structural, PackageGate) };
+        }
         var names = refuseIfRunning.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (names.Length == 0) throw new UsageException("--refuse-if-running needs at least one process name.");
         return new WgsStoreOptions
         {
-            WriteGate = WgsWriteGates.Combine(WgsWriteGates.Structural, WgsWriteGates.RefuseWhileRunning(names)),
+            WriteGate = WgsWriteGates.Combine(WgsWriteGates.Structural, PackageGate, WgsWriteGates.RefuseWhileRunning(names)),
         };
     }
+
+    private static readonly IWgsWriteGate PackageGate = WgsWriteGates.RefuseWhilePackageRuns();
 
     private static bool TryOpen(Ctx ctx, string path, TextWriter stderr, out WgsStore store, string? refuseIfRunning = null)
         => TryOpen(ctx, path, stderr, out store, out _, refuseIfRunning);

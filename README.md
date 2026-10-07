@@ -64,7 +64,9 @@ wgs sanitize  <store> <out-folder>                    # shareable copy: structur
 
 `put`, `delete`, `restore`, `import` and `wrap` write. Each refuses without a backup folder (or
 `--dry-run`), takes the backup first, and goes through the same write gate and concurrent-change
-check as the library. `--refuse-if-running <name>` adds a process check. `list` and `diagnose` say
+check as the library. Every write also refuses while a process of the store's own package runs
+(the game, found by package identity, so no executable name is needed). `--refuse-if-running <name>`
+adds a check by process name. `list` and `diagnose` say
 which game adapter matched the store.
 
 ### Game adapters
@@ -114,7 +116,7 @@ All services are injected through `WgsStoreOptions`; every member has a real def
 | `IWgsClock` | Time source for the index and entry FILETIMEs. |
 | `IWgsLog` | Receives what the store does. |
 | `IWgsBlobInspector` | Game adapter: recognises a blob's payload, to label orphaned data and suggest a container name. |
-| `IWgsWriteGate` | Decides whether a write may proceed. `WgsWriteGates.Structural` (the default) refuses unresolved cloud conflicts and undefined container states. `WgsWriteGates.RefuseWhileRunning("MyGame*")` refuses while a process runs, and `WgsWriteGates.Combine(...)` composes gates. |
+| `IWgsWriteGate` | Decides whether a write may proceed. `WgsWriteGates.Structural` (the default) refuses unresolved cloud conflicts and undefined container states. `WgsWriteGates.RefuseWhilePackageRuns()` refuses while the store's own package (the game) runs, for any title; `WgsWriteGates.RefuseWhileRunning("MyGame*")` refuses while a named process runs, and `WgsWriteGates.Combine(...)` composes gates. |
 | `IWgsGameAdapter` | A game adapter: matches a package family, classifies containers, describes blob contents, supplies an inspector, gate and codec. Resolved by `WgsGameAdapterRegistry`; `GenericWgsAdapter` is the always-last fallback. |
 | `IWgsNativeLayout` | Maps containers and blobs to the game's own files and back, for unwrap and wrap. `WgsNativeLayouts` has the declarative ones and `Map(...)` for custom mappings; an adapter supplies one through `NativeLayout`. |
 | `IWgsProcessLister` | Lists running processes, so a process gate is testable. |
