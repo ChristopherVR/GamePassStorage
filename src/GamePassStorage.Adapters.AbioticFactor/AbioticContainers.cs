@@ -89,25 +89,10 @@ public static class AbioticContainers
     }
 
     /// <summary>The class name a GVAS save records after its header, or null when it cannot be read. Bounded and never throws.
-    /// Header: magic, save-game version, package versions, engine version (three u16, a u32 and an FString), custom-version
-    /// table, then the save-game class FString.</summary>
+    /// See <see cref="WgsGvas.TryReadHeader"/> for the layout.</summary>
     public static string? TryReadGvasClass(byte[] d)
     {
         ArgumentNullException.ThrowIfNull(d);
-        if (d.Length < 12 || d[0] != (byte)'G' || d[1] != (byte)'V' || d[2] != (byte)'A' || d[3] != (byte)'S') return null;
-        var pos = 4;
-        var saveVersion = BitConverter.ToInt32(d, pos); pos += 4;
-        pos += 4;                                  // package file UE4 version
-        if (saveVersion >= 3) pos += 4;            // package file UE5 version
-        pos += 10;                                 // engine major, minor, patch (u16 each) and changelist (u32)
-        var s = AbfBundleToc.ReadString(d, ref pos);   // engine branch
-        if (s is null || pos + 8 > d.Length) return null;
-        pos += 4;                                  // custom version format
-        var count = BitConverter.ToInt32(d, pos); pos += 4;
-        if (count is < 0 or > 4096) return null;
-        pos += count * 20;                         // GUID + version per custom version
-        if (pos > d.Length) return null;
-        var cls = AbfBundleToc.ReadString(d, ref pos);
-        return string.IsNullOrEmpty(cls) ? null : cls;
+        return WgsGvas.TryReadHeader(d)?.SaveGameClass;
     }
 }

@@ -15,7 +15,7 @@ names container kinds, describes what a blob holds, names orphaned data and adds
 | Adapter | Package | Serves | What it adds |
 | --- | --- | --- | --- |
 | Abiotic Factor | `GamePassStorage.Adapters.AbioticFactor` (built into `wgs`) | `PlayStack.AbioticFactor_3wcqaesafpzfy` | Container classification (`<World>-WC`, `<World>-WC-B`, `Profile*`, `Settings`), the `ABF_SAVE_VERSION` table of contents read without decompressing, settings ini decoding, orphaned world names, and a gate that refuses while `AbioticFactor*` runs. World bodies are Oodle-compressed and Oodle is not bundled, so the adapter reports that instead of decoding. |
-| Catalog | `GamePassStorage.Adapters.Catalog` (built into `wgs`) | The 43 families below | The native layout for `wgs unwrap` and `wgs wrap`. No payload knowledge. `wgs` refuses writes while the title's own package runs (the package gate, which every title gets). |
+| Catalog | `GamePassStorage.Adapters.Catalog` (built into `wgs`) | The 43 families below | The native layout for `wgs unwrap` and `wgs wrap`. Payload knowledge for Palworld (below); the rest are described generically, which names the class of any Unreal (GVAS) save. `wgs` refuses writes while the title's own package runs (the package gate, which every title gets). |
 
 Every other title is served by the generic adapter: `list`, `diagnose`, `extract`, `put`, `delete`,
 `restore`, `export`, `import` and a generic `inspect` (size, SHA-256, content sniffing) all work. To add a
@@ -75,6 +75,12 @@ repository**; each layout is tested only against synthetic stores shaped as that
 | Control | `505GAMESS.P.A.ControlPCGP_tefn33qh9azfc` | `control` | unwrap and wrap | reported working on Epic |
 | Starfield | `BethesdaSoftworks.ProjectGold_3275kfvn8vcwc` | `starfield` | unwrap only | reported working on Steam |
 | One Lonely Outpost | `FreedomGames.OneLonelyOutpostGame_0c9x75n11d8wg` | `one-lonely-outpost` | unwrap only | reported working on Steam |
+
+Palworld also has payload knowledge: `wgs inspect` reads its `.sav` wrapper (`PlZ`, save type `0x31`
+zlib or `0x32` zlib twice, optionally behind a `CNK` prefix, as
+[palworld-save-tools](https://github.com/cheahjs/palworld-save-tools) reads it, MIT) and names the
+GVAS class inside, and its codec decodes a save to the GVAS bytes for an Unreal save editor.
+Re-wrapping is not offered yet: which save type each file must use is not established.
 
 Layout notes:
 

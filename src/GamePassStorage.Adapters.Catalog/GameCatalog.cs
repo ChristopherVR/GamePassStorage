@@ -11,9 +11,11 @@ public enum CatalogEvidence
     Unconfirmed,
 }
 
-/// <summary>One title: its package family, its native layout and where that knowledge came from.</summary>
+/// <summary>One title: its package family, its native layout and where that knowledge came from. A title whose payload
+/// format is known also has a <paramref name="Describer"/> (null result: not recognised) and possibly a <paramref name="Codec"/>.</summary>
 public sealed record CatalogEntry(string Id, string Title, string PackageFamily, IWgsNativeLayout Layout,
-    CatalogEvidence Evidence, string? Note = null);
+    CatalogEvidence Evidence, string? Note = null,
+    Func<string, byte[], WgsContentDescription?>? Describer = null, IWgsPayloadCodec? Codec = null);
 
 /// <summary>
 /// The titles whose native layout is known from community tools. Package family names and mappings are taken
@@ -70,7 +72,8 @@ public static class GameCatalog
         new("wo-long", "Wo Long: Fallen Dynasty", "946B6A6E.WoLongFallenDynasty_dkffhzhmh6pmy", Folders, Unconfirmed),
 
         // Game-specific mappings.
-        new("palworld", "Palworld", "PocketpairInc.Palworld_ad4psfrxyesvt", CatalogLayouts.Palworld, Steam),
+        new("palworld", "Palworld", "PocketpairInc.Palworld_ad4psfrxyesvt", CatalogLayouts.Palworld, Steam,
+            Describer: PalworldSave.Describe, Codec: PalworldSave.Instance),
         new("forza-horizon-5", "Forza Horizon 5", "Microsoft.624F8B84B80_8wekyb3d8bbwe", CatalogLayouts.Forza, Steam),
         new("lies-of-p", "Lies of P", "Neowiz.3616725F496B_r4z3116tdh636", CatalogLayouts.LiesOfP, Steam,
             "Wrapping only replaces existing saves: the numeric prefix Xbox adds is not in the native file name."),
@@ -122,6 +125,7 @@ public sealed class CatalogGameAdapter(CatalogEntry entry) : IWgsGameAdapter
     public string DisplayName => $"{Entry.Title} (Game Pass, catalog)";
     public IReadOnlyList<string> KnownPackageFamilyNames => [Entry.PackageFamily];
     public IWgsNativeLayout? NativeLayout => Entry.Layout;
+    public IWgsPayloadCodec? Codec => Entry.Codec;
 
     /// <summary>Not container-name conventions as such (the catalog knows none): where the layout came from and its caveats.</summary>
     public IReadOnlyList<string> ContainerNameConventions =>
@@ -136,17 +140,19 @@ public sealed class CatalogGameAdapter(CatalogEntry entry) : IWgsGameAdapter
     public WgsContentDescription Describe(WgsContainer container, byte[] blob)
     {
         ArgumentNullException.ThrowIfNull(container);
-        return WithNote(WgsContentDescription.Generic(container.Name, blob));
+        return Entry.Describer?.Invoke(container.Name, blob) ?? WithNote(WgsContentDescription.Generic(container.Name, blob));
     }
 
     public WgsContentDescription Describe(WgsContainer container, string blobName, byte[] blob)
     {
         ArgumentNullException.ThrowIfNull(container);
-        return WithNote(WgsContentDescription.Generic($"{container.Name}/{blobName}", blob));
+        var name = $"{container.Name}/{blobName}";
+        return Entry.Describer?.Invoke(name, blob) ?? WithNote(WgsContentDescription.Generic(name, blob));
     }
 
     private WgsContentDescription WithNote(WgsContentDescription generic)
-        => generic with { Notes = [$"{Entry.Title}: the catalog knows the native layout ({Entry.Layout.Name}), not the payload format."] };
+        => generic with { Notes = [$"{Entry.Title}: the catalog knows the native layout ({Entry.Layout.Name}), not the payload format.",
+            .. generic.Notes.Skip(1)] };
 
     private static string Describe(CatalogEvidence evidence) => evidence switch
     {

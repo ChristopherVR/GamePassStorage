@@ -23,7 +23,8 @@ no package dependencies and no game code.
 - **Unwrap** a save into the plain files the game uses outside Xbox (its Steam or Epic layout), and
   **wrap** edited files back, using a game's known layout (43 titles catalogued) or a generic one.
 - **Gate writes** structurally and by process (refuse while the game runs), composable.
-- **Inspect** what a blob holds through a game adapter, or generically (size, SHA-256, sniffing).
+- **Inspect** what a blob holds through a game adapter, or generically (size, SHA-256, sniffing; for
+  any Unreal Engine save, the engine version and save-game class from its GVAS header).
 - **Read PGS saves**, the file-oriented layout newer GDK titles keep under `XboxGames\GameSave\pgs`:
   find them, list a snapshot, extract the save files untouched, back up the whole root. Read-only by design.
 - **Snapshot and compare** a store around a cloud sync; **diagnose** and explicitly **repair**.

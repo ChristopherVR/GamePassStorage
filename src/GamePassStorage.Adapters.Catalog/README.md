@@ -24,7 +24,8 @@ var layout = opened.Adapter!.NativeLayout ?? WgsNativeLayouts.ContainerFolders;
 var result = opened.Open.Store!.TryUnwrapTo(outFolder, layout);
 ```
 
-The adapters describe payloads generically and add no write gate of their own: process names are not
+Palworld's adapter also reads its `.sav` wrapper and decodes it to the GVAS save inside (format from
+[palworld-save-tools](https://github.com/cheahjs/palworld-save-tools), MIT). The other adapters describe payloads generically and add no write gate of their own: process names are not
 known, but `WgsWriteGates.RefuseWhilePackageRuns()` (on by default in `wgs`) finds a running game by its
 package. Every write still goes through the library's structural gate, concurrent-change check and
 generation write.

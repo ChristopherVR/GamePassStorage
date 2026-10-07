@@ -27,9 +27,15 @@ public sealed record WgsContentDescription(string Kind, string Summary, IReadOnl
         var head = blob.AsSpan(0, Math.Min(blob.Length, 16));
         var type = Sniff(blob);
         var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(blob));
+        List<string> notes = ["No game-specific adapter recognised this payload."];
+        if (WgsGvas.TryReadHeader(blob) is { } gvas)
+        {
+            type = $"GVAS (Unreal save) {gvas.SaveGameClass}";
+            notes.Add($"Unreal Engine {gvas.EngineVersion} save of class {gvas.SaveGameClass}; the property stream is not parsed.");
+        }
         return new WgsContentDescription("opaque", $"{blob.Length:N0} bytes of {type}",
             [new WgsDescribedMember(blobName, blob.Length, type, $"sha256 {sha}; starts {Convert.ToHexString(head)}")],
-            ["No game-specific adapter recognised this payload."]);
+            notes);
     }
 
     private static string Sniff(byte[] blob)
