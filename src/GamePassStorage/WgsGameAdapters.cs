@@ -111,6 +111,11 @@ public interface IWgsGameAdapter
     /// <summary>Decode/encode hook for the game's payloads. Null when the adapter offers none.</summary>
     IWgsPayloadCodec? Codec => null;
 
+    /// <summary>How this game's containers map to the plain save files it keeps outside Xbox (the Steam or Epic layout),
+    /// so a save can be taken out of the wrapper and put back. Null when the adapter offers none; the
+    /// declarative layouts in <see cref="WgsNativeLayouts"/> can still be chosen by hand.</summary>
+    IWgsNativeLayout? NativeLayout => null;
+
     /// <summary>Describes what a container's blob holds. Return <see cref="WgsContentDescription.Generic"/>
     /// output for a payload this adapter does not recognise.</summary>
     WgsContentDescription Describe(WgsContainer container, byte[] blob);

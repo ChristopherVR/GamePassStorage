@@ -336,3 +336,36 @@ are never applied**: only the service issues an ETag. Containers are applied one
 through the gate and the concurrent-change check; the first failure stops the import, leaving the
 earlier containers fully written and the later ones untouched. An imported-over tombstone is
 refused. `--dry-run` lists what would be added or replaced and every problem found.
+
+## wgs unwrap
+
+```console
+wgs unwrap <store> <out-folder> [--layout <spec>]
+```
+
+Writes the save as the game itself lays it out outside Xbox (the Steam or Epic files), without the
+container wrapper. The layout is the matching game adapter's own (`wgs adapters` shows it; 43 titles
+come with the built-in catalog), else `container-folders`, which is lossless for any store. `--layout`
+overrides it:
+
+| Spec | Files |
+| --- | --- |
+| `container-folders[:<suffix>]` | `<container>/<blob><suffix>` |
+| `one-file[:<suffix>]` | `<container><suffix>` for each single-blob container |
+| `blobs[:<container>]` | `<blob>` for one container's blobs (default: the first container) |
+
+Containers and blobs the layout leaves out, and names that are not safe file names on this system,
+are listed as skipped. Reads the store only. The folder must be empty or absent.
+
+## wgs wrap
+
+```console
+wgs wrap <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
+```
+
+The reverse of `unwrap`: maps each file in the folder back to a container and blob with the same
+layout and writes them through the import path. Every file is read and the whole plan checked
+before the first write. Existing containers have only the mapped blobs replaced; new containers
+are created never-uploaded (no ETag). Files the layout does not recognise are listed as ignored and
+left alone. Layouts that cannot be inverted (Starfield, State of Decay 2, One Lonely Outpost) refuse.
+As with every write, Xbox still has to accept the change on its next sync.

@@ -48,6 +48,9 @@ public static class WgsCli
                                                              matching game adapter (generic if none).
           wgs export    <store> <out-folder>                 Write every container's blobs and a manifest.
           wgs import    <store> <folder> --backup <dir> [--dry-run]
+          wgs unwrap    <store> <out-folder> [--layout <spec>]       # the game's plain save files, no Xbox wrapper
+          wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
+          (layouts: container-folders[:<suffix>], one-file[:<suffix>], blobs[:<container>]; default: the game's own, else container-folders)
                                                              Add or replace containers from an export folder.
 
         <store> is a wgs folder (the one holding containers.index) or a folder above it.
@@ -96,6 +99,8 @@ public static class WgsCli
                 "restore" => Restore(rest, stdout, stderr, ctx),
                 "export" => Export(rest, stdout, stderr, ctx),
                 "import" => Import(rest, stdout, stderr, ctx),
+                "unwrap" => Unwrap(rest, stdout, stderr, ctx),
+                "wrap" => Wrap(rest, stdout, stderr, ctx),
                 _ => UsageError(stderr, $"Unknown command '{command}'."),
             };
         }
@@ -158,6 +163,7 @@ public static class WgsCli
             PackageFamilyNames = x.KnownPackageFamilyNames,
             Conventions = x.ContainerNameConventions,
             Codec = x.Codec?.Name,
+            NativeLayout = x.NativeLayout is { } l ? l.Name + (l.CanWrap ? "" : " (unwrap only)") : null,
             HasBlobInspector = x.BlobInspector is not null,
             HasWriteGate = x.WriteGate is not null,
         }).ToList();
@@ -171,7 +177,7 @@ public static class WgsCli
             stdout.WriteLine($"{r.Id}  {r.DisplayName}  [{r.Source}]");
             if (r.PackageFamilyNames.Count > 0) stdout.WriteLine($"  serves: {string.Join(", ", r.PackageFamilyNames)}");
             foreach (var c in r.Conventions) stdout.WriteLine($"  container: {c}");
-            stdout.WriteLine($"  inspector: {(r.HasBlobInspector ? "yes" : "no")}  write gate: {(r.HasWriteGate ? "yes" : "no")}  codec: {r.Codec ?? "none"}");
+            stdout.WriteLine($"  inspector: {(r.HasBlobInspector ? "yes" : "no")}  write gate: {(r.HasWriteGate ? "yes" : "no")}  codec: {r.Codec ?? "none"}  native layout: {r.NativeLayout ?? "none"}");
             if (r.Source == "plugin") stdout.WriteLine($"  loaded from: {r.Assembly}");
         }
         stdout.WriteLine($"{GenericWgsAdapter.GenericId}  {GenericWgsAdapter.Instance.DisplayName}  [always last]");
@@ -628,6 +634,81 @@ public static class WgsCli
             return Failure;
         }
         stdout.WriteLine($"imported {result.Applied.Count} container(s); backup at {backup}");
+        return Ok;
+    }
+
+    private static IWgsNativeLayout ResolveLayout(string? spec, IWgsGameAdapter adapter)
+    {
+        if (spec is not null)
+        {
+            return WgsNativeLayouts.Parse(spec)
+                ?? throw new UsageException($"Unknown layout '{spec}'. Use container-folders[:<suffix>], one-file[:<suffix>] or blobs[:<container>].");
+        }
+        // container-folders is lossless for any store, so it is the default when the game has no layout of its own.
+        return adapter.NativeLayout ?? WgsNativeLayouts.ContainerFolders;
+    }
+
+    private static int Unwrap(Arguments a, TextWriter stdout, TextWriter stderr, Ctx ctx)
+    {
+        var spec = a.Option("--layout");
+        var storePath = a.Positional(0, "store");
+        var folder = a.Positional(1, "out-folder");
+        a.EnsureConsumed();
+        if (!TryOpen(ctx, storePath, stderr, out var store, out var adapter)) return Failure;
+        var layout = ResolveLayout(spec, adapter);
+        var result = store.TryUnwrapTo(folder, layout);
+        foreach (var s in result.Skipped) stdout.WriteLine($"skipped {s}");
+        if (!result.Succeeded)
+        {
+            stderr.WriteLine($"error: {result.Status}: {result.Message}");
+            return Failure;
+        }
+        foreach (var f in result.Files) stdout.WriteLine($"wrote {f}");
+        stdout.WriteLine($"unwrapped {result.Files.Count} file(s) to {folder} (layout {layout.Name})");
+        return Ok;
+    }
+
+    private static int Wrap(Arguments a, TextWriter stdout, TextWriter stderr, Ctx ctx)
+    {
+        var spec = a.Option("--layout");
+        var backup = a.Option("--backup");
+        var dryRun = a.Flag("--dry-run");
+        var gate = a.Option("--refuse-if-running");
+        var storePath = a.Positional(0, "store");
+        var folder = a.Positional(1, "folder");
+        a.EnsureConsumed();
+        RequireBackupOrDryRun("wrap", backup, dryRun);
+        if (!TryOpen(ctx, storePath, stderr, out var store, out var adapter, gate)) return Failure;
+        var layout = ResolveLayout(spec, adapter);
+        var plan = store.PlanWrap(folder, layout);
+        foreach (var u in plan.Unmapped) stdout.WriteLine($"ignored {u} (not part of layout {layout.Name})");
+        if (dryRun)
+        {
+            foreach (var item in plan.Import.Items)
+            {
+                stdout.WriteLine($"would {(item.IsNew ? "add" : "replace")} '{item.ContainerName}': {string.Join(", ", item.BlobNames)} ({item.TotalBytes:N0} bytes)");
+            }
+            foreach (var p in plan.Import.Problems) stdout.WriteLine($"PROBLEM: {p}");
+            foreach (var c in plan.Import.Assessment.Concerns) stdout.WriteLine($"{(c.Blocking ? "BLOCKS WRITES" : "note")}: {c.Message}");
+            return plan.CanApply ? Ok : Failure;
+        }
+        if (!plan.CanApply)
+        {
+            foreach (var p in plan.Import.Problems) stderr.WriteLine($"error: {p}");
+            if (!plan.Import.Assessment.CanWrite) stderr.WriteLine($"error: {plan.Import.Assessment.BlockingMessage()}");
+            stderr.WriteLine("nothing was written");
+            return Failure;
+        }
+        if (!TakeBackup(store, backup!, stderr)) return Failure;
+        var result = store.TryWrap(folder, layout);
+        foreach (var name in result.Applied) stdout.WriteLine($"wrapped '{name}'");
+        if (!result.Succeeded)
+        {
+            stderr.WriteLine($"error: {result.Status}: {result.Message}");
+            stderr.WriteLine($"the backup is at {backup}");
+            return Failure;
+        }
+        stdout.WriteLine($"wrapped {result.Applied.Count} container(s); backup at {backup}");
         return Ok;
     }
 

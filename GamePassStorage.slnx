@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/GamePassStorage/GamePassStorage.csproj" />
     <Project Path="src/GamePassStorage.Adapters.AbioticFactor/GamePassStorage.Adapters.AbioticFactor.csproj" />
+    <Project Path="src/GamePassStorage.Adapters.Catalog/GamePassStorage.Adapters.Catalog.csproj" />
     <Project Path="src/GamePassStorage.Tool/GamePassStorage.Tool.csproj" />
   </Folder>
   <Folder Name="/tests/">

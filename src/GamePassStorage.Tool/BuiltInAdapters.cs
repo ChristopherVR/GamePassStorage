@@ -1,4 +1,5 @@
 using GamePassStorage.Adapters.AbioticFactor;
+using GamePassStorage.Adapters.Catalog;
 
 namespace GamePassStorage.Tool;
 
@@ -12,5 +13,6 @@ internal static class BuiltInAdapters
     public static IReadOnlyList<IWgsGameAdapter> Create() =>
     [
         AbioticFactorAdapter.Instance,
+        .. GameCatalog.CreateAdapters(),
     ];
 }

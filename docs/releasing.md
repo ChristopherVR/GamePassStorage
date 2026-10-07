@@ -1,7 +1,7 @@
 # Releasing
 
-Pushing a version tag publishes `GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor` and
-`GamePassStorage.Tool` to nuget.org and creates a GitHub release after tests pass on Windows and Linux.
+Pushing a version tag publishes `GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor`,
+`GamePassStorage.Adapters.Catalog` and `GamePassStorage.Tool` to nuget.org and creates a GitHub release after tests pass on Windows and Linux.
 
 ```console
 git tag v0.1.0

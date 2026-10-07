@@ -21,6 +21,7 @@
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <ProjectReference Include="..\GamePassStorage\GamePassStorage.csproj" />
     <ProjectReference Include="..\GamePassStorage.Adapters.AbioticFactor\GamePassStorage.Adapters.AbioticFactor.csproj" />
+    <ProjectReference Include="..\GamePassStorage.Adapters.Catalog\GamePassStorage.Adapters.Catalog.csproj" />
   </ItemGroup>
 
 </Project>

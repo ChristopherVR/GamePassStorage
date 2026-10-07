@@ -126,8 +126,8 @@ public sealed partial class WgsStore
         }
     }
 
-    private sealed record ImportSource(string ContainerName, List<(string BlobName, string Path, long? Size, string? Sha256)> Blobs);
-    private sealed record PreparedImport(WgsImportPlan Plan, List<(string Name, Dictionary<string, byte[]> Blobs)> Containers);
+    internal sealed record ImportSource(string ContainerName, List<(string BlobName, string Path, long? Size, string? Sha256)> Blobs);
+    internal sealed record PreparedImport(WgsImportPlan Plan, List<(string Name, Dictionary<string, byte[]> Blobs)> Containers);
 
     /// <summary>Previews <see cref="TryImport"/>: what would be added or replaced, and every problem that would stop it. Writes nothing.</summary>
     public WgsImportPlan PlanImport(string folder) => PrepareImport(folder).Plan;
@@ -136,8 +136,6 @@ public sealed partial class WgsStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         var problems = new List<string>();
-        var items = new List<WgsImportItem>();
-        var containers = new List<(string Name, Dictionary<string, byte[]> Blobs)>();
         List<ImportSource> sources;
         try { sources = DiscoverImport(folder, problems); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -145,33 +143,49 @@ public sealed partial class WgsStore
             problems.Add($"The import folder could not be read: {ex.Message}");
             sources = [];
         }
+        return BuildPrepared(sources, problems, $"'{folder}'");
+    }
+
+    private PreparedImport BuildPrepared(List<ImportSource> sources, List<string> problems, string origin)
+    {
+        var loaded = new List<(string Name, Dictionary<string, byte[]> Blobs, bool Ok)>();
         foreach (var source in sources)
         {
-            long total = 0;
             var ok = true;
             var blobs = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             foreach (var b in source.Blobs)
             {
                 var data = ReadVerified(source.ContainerName, b, problems);
                 if (data is null) { ok = false; continue; }
-                total += data.Length;
                 blobs.Add(b.BlobName, data);
             }
-            var existing = Find(source.ContainerName);
+            loaded.Add((source.ContainerName, blobs, ok));
+        }
+        return FinishPrepared(loaded, problems, origin);
+    }
+
+    // Shared by import and wrap: checks each container against the store and builds the plan.
+    private PreparedImport FinishPrepared(List<(string Name, Dictionary<string, byte[]> Blobs, bool Ok)> loaded,
+        List<string> problems, string origin)
+    {
+        var items = new List<WgsImportItem>();
+        var containers = new List<(string Name, Dictionary<string, byte[]> Blobs)>();
+        foreach (var (name, blobs, readOk) in loaded)
+        {
+            var ok = readOk;
+            var existing = Find(name);
             if (existing is not null && existing.RawState == (uint)WgsEntryState.Deleted)
             {
-                problems.Add($"'{source.ContainerName}' is deleted and waiting for the cloud to learn of it; it cannot be imported over.");
+                problems.Add($"'{name}' is deleted and waiting for the cloud to learn of it; it cannot be imported over.");
                 ok = false;
             }
-            if (ok)
-            {
-                try { ValidateBlobSet(blobs); }
-                catch (ArgumentException ex) { problems.Add($"'{source.ContainerName}': {ex.Message}"); continue; }
-                items.Add(new WgsImportItem(source.ContainerName, existing is null, source.Blobs.Select(b => b.BlobName).ToList(), total));
-                containers.Add((source.ContainerName, blobs));
-            }
+            if (!ok) continue;
+            try { ValidateBlobSet(blobs); }
+            catch (ArgumentException ex) { problems.Add($"'{name}': {ex.Message}"); continue; }
+            items.Add(new WgsImportItem(name, existing is null, blobs.Keys.ToList(), blobs.Values.Sum(v => (long)v.Length)));
+            containers.Add((name, blobs));
         }
-        if (items.Count == 0 && problems.Count == 0) problems.Add($"'{folder}' holds nothing to import.");
+        if (items.Count == 0 && problems.Count == 0) problems.Add($"{origin} holds nothing to import.");
         return new PreparedImport(new WgsImportPlan(items, problems, AssessWrite()), containers);
     }
 
@@ -191,6 +205,11 @@ public sealed partial class WgsStore
         {
             return new WgsImportResult(WgsOperationStatus.Refused, [], plan.Assessment.BlockingMessage());
         }
+        return ApplyPrepared(prepared);
+    }
+
+    private WgsImportResult ApplyPrepared(PreparedImport prepared)
+    {
         var applied = new List<string>();
         foreach (var (name, changes) in prepared.Containers)
         {

@@ -20,6 +20,8 @@ no package dependencies and no game code.
   tombstone that keeps its ETag.
 - **Restore** a whole-folder backup, with a safety copy of the current store first.
 - **Export** every container's blobs to a folder with a manifest, and **import** a folder back.
+- **Unwrap** a save into the plain files the game uses outside Xbox (its Steam or Epic layout), and
+  **wrap** edited files back, using a game's known layout (43 titles catalogued) or a generic one.
 - **Gate writes** structurally and by process (refuse while the game runs), composable.
 - **Inspect** what a blob holds through a game adapter, or generically (size, SHA-256, sniffing).
 - **Snapshot and compare** a store around a cloud sync; **diagnose** and explicitly **repair**.
@@ -33,6 +35,7 @@ it for Abiotic Factor's Game Pass saves. That is the only title verified so far;
 ```console
 dotnet add package GamePassStorage          # the library
 dotnet add package GamePassStorage.Adapters.AbioticFactor   # optional: the Abiotic Factor adapter
+dotnet add package GamePassStorage.Adapters.Catalog         # optional: native layouts for 43 titles
 dotnet tool install -g GamePassStorage.Tool # the `wgs` command-line tool (adapters built in)
 ```
 
@@ -54,9 +57,11 @@ wgs adapters  [--json]                                # game adapters in use
 wgs inspect   <store> [<container>] [--json]          # what containers hold (adapter or generic)
 wgs export    <store> <out-folder>                    # every container's blobs + manifest
 wgs import    <store> <folder> --backup <dir> [--dry-run]
+wgs unwrap    <store> <out-folder> [--layout <spec>]    # the save as the game lays it out, no Xbox wrapper
+wgs wrap      <store> <folder> --backup <dir> [--layout <spec>] [--dry-run]
 ```
 
-`put`, `delete`, `restore` and `import` write. Each refuses without a backup folder (or
+`put`, `delete`, `restore`, `import` and `wrap` write. Each refuses without a backup folder (or
 `--dry-run`), takes the backup first, and goes through the same write gate and concurrent-change
 check as the library. `--refuse-if-running <name>` adds a process check. `list` and `diagnose` say
 which game adapter matched the store.
@@ -110,6 +115,7 @@ All services are injected through `WgsStoreOptions`; every member has a real def
 | `IWgsBlobInspector` | Game adapter: recognises a blob's payload, to label orphaned data and suggest a container name. |
 | `IWgsWriteGate` | Decides whether a write may proceed. `WgsWriteGates.Structural` (the default) refuses unresolved cloud conflicts and undefined container states. `WgsWriteGates.RefuseWhileRunning("MyGame*")` refuses while a process runs, and `WgsWriteGates.Combine(...)` composes gates. |
 | `IWgsGameAdapter` | A game adapter: matches a package family, classifies containers, describes blob contents, supplies an inspector, gate and codec. Resolved by `WgsGameAdapterRegistry`; `GenericWgsAdapter` is the always-last fallback. |
+| `IWgsNativeLayout` | Maps containers and blobs to the game's own files and back, for unwrap and wrap. `WgsNativeLayouts` has the declarative ones and `Map(...)` for custom mappings; an adapter supplies one through `NativeLayout`. |
 | `IWgsProcessLister` | Lists running processes, so a process gate is testable. |
 
 ## Safety rules the library enforces
@@ -143,6 +149,7 @@ read and write rules, sources, and what is still unverified.
 | Title | Read | Write | Evidence |
 | --- | --- | --- | --- |
 | Abiotic Factor | Yes | Yes | Shipped adapter (`GamePassStorage.Adapters.AbioticFactor`, built into `wgs`); real sanitized stores and in-game use through Abiotic Editor |
+| 43 catalogued titles (Palworld, Starfield, Forza Horizon 5, Hades, Remnant 2, ...) | Native layout | Native layout | `GamePassStorage.Adapters.Catalog`, built into `wgs`: community-sourced mappings from XGP-save-extractor, synthetic tests only. See [the list](docs/supported-titles.md#the-catalog) |
 | Any other title | Unverified | Unverified | Works through the generic model; needs real sanitized fixtures before a support claim |
 
 The in-memory tests exercise the API boundary with synthetic stores; they are not evidence that a
@@ -169,8 +176,9 @@ dotnet test  GamePassStorage.slnx
 
 ## Releasing
 
-Pushing a version tag tests on Windows and Linux, publishes all three packages to nuget.org
-(`GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor` and `GamePassStorage.Tool`), and creates
+Pushing a version tag tests on Windows and Linux, publishes the packages to nuget.org
+(`GamePassStorage`, `GamePassStorage.Adapters.AbioticFactor`, `GamePassStorage.Adapters.Catalog` and
+`GamePassStorage.Tool`), and creates
 a GitHub release:
 
 ```console

@@ -38,6 +38,7 @@ export default defineConfig({
           { text: 'NuGet: GamePassStorage', link: 'https://www.nuget.org/packages/GamePassStorage' },
           { text: 'NuGet: GamePassStorage.Tool', link: 'https://www.nuget.org/packages/GamePassStorage.Tool' },
           { text: 'NuGet: GamePassStorage.Adapters.AbioticFactor', link: 'https://www.nuget.org/packages/GamePassStorage.Adapters.AbioticFactor' },
+          { text: 'NuGet: GamePassStorage.Adapters.Catalog', link: 'https://www.nuget.org/packages/GamePassStorage.Adapters.Catalog' },
         ],
       },
     ],

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A catalog of game adapters whose only game knowledge is how containers map to the files the game
+    keeps outside Xbox (its native layout). The mappings come from community tools, chiefly
+    Z1ni/XGP-save-extractor (MIT), and are unverified here until a real sanitized store says otherwise.
+    It references only the GamePassStorage library and ships built into the wgs tool.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>GamePassStorage.Adapters.Catalog</RootNamespace>
+    <AssemblyName>GamePassStorage.Adapters.Catalog</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591;CS1573</NoWarn>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+
+    <IsPackable>true</IsPackable>
+    <PackageId>GamePassStorage.Adapters.Catalog</PackageId>
+    <Title>Game catalog for GamePassStorage</Title>
+    <Description>Native save layouts for dozens of Game Pass titles (Palworld, Starfield, Forza Horizon 5, Hades, Remnant 2 and more), so their saves can be unwrapped from Xbox containers into the files the Steam or Epic version uses, and wrapped back.</Description>
+    <PackageTags>xbox;game-pass;connected-storage;wgs;save-converter;steam;game-adapter</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <ProjectReference Include="..\GamePassStorage\GamePassStorage.csproj" />
+  </ItemGroup>
+
+</Project>

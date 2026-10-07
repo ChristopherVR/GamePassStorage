@@ -105,6 +105,44 @@ write to. The loader never downloads anything; it only reads the folders you giv
 adapters are part of the tool's own package and carry the same trust as the tool.
 :::
 
+## Native layouts: the save without the Xbox wrapper
+
+Xbox stores a save as containers and GUID-named blobs. The game itself, on Steam or Epic, keeps plain
+files and folders. A **native layout** (`IWgsNativeLayout`) is the invertible mapping between the two, so a
+save can be taken out of the wrapper to edit, back up or move, and put back.
+
+```console
+wgs unwrap <store> <out-folder> --layout container-folders
+wgs wrap   <store> <folder> --layout one-file:.sav --backup <dir> [--dry-run]
+```
+
+Layouts that need no code: `container-folders[:<suffix>]` (`<container>/<blob>`), `one-file[:<suffix>]`
+(one file per single-blob container) and `blobs[:<container>]` (one container's blobs side by side, the
+first container by default). An adapter supplies its own through `IWgsGameAdapter.NativeLayout`, which
+becomes the default for that title; with none, the tool uses `container-folders`.
+
+A custom layout is usually two functions:
+
+```csharp
+public IWgsNativeLayout? NativeLayout { get; } = WgsNativeLayouts.Map("my-game",
+    (ctx, container, blob, blobCount) => blobCount == 1 ? $"Saves/{container}.sav" : null,   // to a file
+    (ctx, path) => path.StartsWith("Saves/") && WgsNativeLayouts.WithoutSuffix(path[6..], ".sav") is { } c
+        ? new WgsNativeTarget(c) : null);                                                   // and back
+```
+
+`WgsNativeContext` gives both directions the store's live container names (in index order) and each
+container's blob names, so a mapping that drops part of a name can find the container it came from.
+Implement `IWgsNativeLayout` directly when a file is built from a whole container (`UnwrapContainer`,
+for example several blobs joined into one file), when content needs transforming (`ToNativeContent` and
+`ToBlobContent`), or when the mapping cannot be inverted (`CanWrap => false`, or pass a null inverse to
+`Map`). `GamePassStorage.Adapters.Catalog` holds 43 worked examples, from one-liners to Starfield's part
+joining.
+
+Unwrap reads only. Wrap uses the same checks as `import`: every file is read and planned before the first
+write, the write gate and concurrent-change check apply, existing containers have only the named blobs
+replaced, new ones are created with no ETag, and files the layout does not recognise are ignored and listed.
+Wrapping changes the local store only; Xbox still has to accept it on the next sync.
+
 ## Walkthrough: the Abiotic Factor adapter
 
 `GamePassStorage.Adapters.AbioticFactor` is a real, shipped adapter (its own NuGet package, built
